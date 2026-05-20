@@ -1,0 +1,63 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "nlp_model_training"
+version = "0.0.1"
+description = "none"
+authors = [
+  { name = "HCMUS_Underdogs" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+dependencies = [
+    "loguru",
+    "mkdocs",
+    "pip",
+    "python-dotenv",
+    "ruff",
+    "tqdm",
+    "typer",
+    "torch",
+    "transformers",
+    "datasets",
+    "evaluate",
+    "accelerate",
+    "pyyaml",
+    "pydantic>=2.0.0",
+    "pydantic-settings",
+    "scikit-learn",
+]
+requires-python = "~=3.10.0"
+
+
+[tool.ruff]
+line-length = 100
+src = ["src", "nlp_model_training"]
+include = ["pyproject.toml", "src/**/*.py", "nlp_model_training/**/*.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort imports
+    "N",   # pep8-naming
+    "UP",  # pyupgrade (modernize syntax)
+    "PL",  # pylint checks for code smell & refactoring suggestions
+]
+ignore = [
+    "PLR2004",  # ignore magic constants rule (often used in deep learning)
+    "PLR0913",  # ignore too many arguments rule (standard in PyTorch trainers)
+    "E501",     # ignore line too long rule (standard for logging & raw config keys)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "nlp_model_training"]
+force-sort-within-sections = true
+
