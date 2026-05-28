@@ -72,6 +72,21 @@ data: requirements
 train: requirements
 	$(PYTHON_INTERPRETER) nlp_model_training/train.py
 
+## Launch EduMIND Streamlit dashboard
+.PHONY: app
+app: requirements
+	$(PYTHON_INTERPRETER) -m streamlit run src/app.py --server.headless true
+
+## Run EduMIND tests only
+.PHONY: test-edumind
+test-edumind: requirements
+	$(PYTHON_INTERPRETER) -m pytest tests/test_speech_processor.py tests/test_vietmix_translator.py tests/test_rag_engine.py -v
+
+## Run all tests (legacy + EduMIND)
+.PHONY: test-all
+test-all: requirements
+	$(PYTHON_INTERPRETER) -m pytest tests/ -v
+
 
 #################################################################################
 # Self Documenting Commands                                                     #
