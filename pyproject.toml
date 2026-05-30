@@ -3,7 +3,7 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "nlp_model_training"
+name = "edumind"
 version = "1.0.0"
 description = "EduMIND — All-in-One Multimodal Lecture Assistant for Bilingual Education"
 authors = [
@@ -26,13 +26,9 @@ dependencies = [
     "typer",
     "torch",
     "transformers",
-    "datasets",
-    "evaluate",
-    "accelerate",
     "pyyaml",
     "pydantic>=2.0.0",
     "pydantic-settings",
-    "scikit-learn",
     # === EduMIND: Streamlit Dashboard ===
     "streamlit>=1.30.0",
     # === EduMIND: ASR Pipeline ===
@@ -48,8 +44,8 @@ requires-python = "~=3.10.0"
 
 [tool.ruff]
 line-length = 100
-src = ["src", "nlp_model_training"]
-include = ["pyproject.toml", "src/**/*.py", "nlp_model_training/**/*.py"]
+src = ["edumind"]
+include = ["pyproject.toml", "edumind/**/*.py"]
 
 [tool.ruff.lint]
 select = [
@@ -68,7 +64,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src", "nlp_model_training"]
+known-first-party = ["edumind"]
 force-sort-within-sections = true
 
 [dependency-groups]
