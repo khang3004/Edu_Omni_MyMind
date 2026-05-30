@@ -25,6 +25,7 @@ dependencies = [
     "tqdm",
     "typer",
     "torch",
+    "torchvision",
     "transformers",
     "pyyaml",
     "pydantic>=2.0.0",
