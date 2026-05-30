@@ -15,6 +15,15 @@ Run:
 
 from __future__ import annotations
 
+# Suppress annoying/verbose Hugging Face transformers warnings.
+# Streamlit's file watcher inspects modules dynamically, which triggers warning
+# logs from transformers' dynamic alias module attributes (like __path__).
+try:
+    import transformers
+    transformers.utils.logging.set_verbosity_error()
+except ImportError:
+    pass
+
 import tempfile
 from pathlib import Path
 

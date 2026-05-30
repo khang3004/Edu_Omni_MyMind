@@ -8,5 +8,15 @@ Integrated multimodal lecture assistant system:
 Developed by HCMUS Underdogs.
 """
 
+# Suppress annoying/verbose Hugging Face transformers warnings.
+# Streamlit's file watcher inspects modules dynamically, which triggers warning
+# logs from transformers' dynamic alias module attributes (like __path__).
+try:
+    import transformers
+    transformers.utils.logging.set_verbosity_error()
+except ImportError:
+    pass
+
 __version__ = "1.0.0"
 __app_name__ = "EduMIND"
+
