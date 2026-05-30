@@ -1,59 +1,21 @@
-"""EduMIND — Bilingual Speech Processor (Code-Switched ASR)
+"""EduMIND — Code-Switched Automatic Speech Recognition (ASR).
 
-This module handles speech-to-text recognition using OpenAI's Whisper model,
-specifically optimized for code-switched (bilingual Vietnamese-English) lecture speech.
-
-Features:
-  1. Transcribes multi-format audio files (WAV, MP3, FLAC, M4A) with timestamps.
-  2. Post-processes text by correcting abbreviations, teencode, and domain slang.
-  3. Automatically falls back to a smart mock mode if Whisper cannot be loaded.
+Transcribes bilingual academic/technical lectures and resolves Vietnamese teencode.
+Supports OpenAI's Whisper model with dynamic fallback capabilities.
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
-from loguru import logger
+from edumind.config import get_settings
+from edumind.core.logging import get_logger
+from edumind.models.transcription import TranscriptResult, TranscriptSegment
 
-
-# ----------------------------------------------------------------------
-# Data Classes for Transcription Outputs
-# ----------------------------------------------------------------------
-@dataclass
-class TranscriptSegment:
-    """Represents a single segment of transcribed text with start and end timestamps.
-
-    Attributes:
-        start: Start time of the segment in seconds.
-        end: End time of the segment in seconds.
-        text: Transcribed text content for this segment.
-    """
-    start: float
-    end: float
-    text: str
+logger = get_logger(__name__)
 
 
-@dataclass
-class TranscriptResult:
-    """Represents the complete transcription result from an audio file.
-
-    Attributes:
-        text: Unified text transcription of the entire audio.
-        segments: Chronological list of transcribed segments.
-        language: Automatically detected language code (e.g., "vi", "en").
-        is_mock: Flag indicating whether mock simulation data was used.
-    """
-    text: str
-    segments: list[TranscriptSegment] = field(default_factory=list)
-    language: str = "vi"
-    is_mock: bool = False
-
-
-# ----------------------------------------------------------------------
-# Main Class: CodeSwitchedASR
-# ----------------------------------------------------------------------
 class CodeSwitchedASR:
     """Bilingual speech recognizer using OpenAI's Whisper.
 
@@ -63,26 +25,24 @@ class CodeSwitchedASR:
 
     def __init__(
         self,
-        model_name: str = "tiny",
+        model_name: str | None = None,
         teencode_map: dict[str, str] | None = None,
     ):
         """Initializes the bilingual ASR processor.
 
         Args:
             model_name: Whisper model version ("tiny", "base", "small", etc.).
+                If None, resolves from config settings.
             teencode_map: Dictionary mapping abbreviations/teencode to full terms.
-                If None, defaults to `settings.TEENCODE_MAP`.
+                If None, defaults to ``settings.TEENCODE_MAP``.
         """
-        self.model_name = model_name
+        settings = get_settings()
+        self.model_name = model_name or settings.WHISPER_MODEL
         self._model = None
         self._is_mock_mode = False
 
         # Load teencode mapping from configuration if not explicitly provided
-        if teencode_map is not None:
-            self.teencode_map = teencode_map
-        else:
-            from edumind.config import settings
-            self.teencode_map = settings.TEENCODE_MAP
+        self.teencode_map = teencode_map if teencode_map is not None else settings.TEENCODE_MAP
 
         # Initialize the Whisper model
         self._load_model()
@@ -95,19 +55,21 @@ class CodeSwitchedASR:
         """
         try:
             import whisper
-            logger.info(f"🎤 Loading Whisper-{self.model_name} model...")
+
+            logger.info("loading_whisper_model", model=self.model_name)
             self._model = whisper.load_model(self.model_name)
-            logger.success(f"✅ Loaded Whisper-{self.model_name} successfully!")
+            logger.info("loaded_whisper_model", model=self.model_name)
         except ImportError:
             logger.warning(
-                "⚠️ Library 'openai-whisper' is not installed. "
-                "Switching to mock mode."
+                "whisper_library_not_installed_mock_mode_fallback",
+                reason="Library 'openai-whisper' is not installed",
             )
             self._is_mock_mode = True
         except Exception as e:
             logger.warning(
-                f"⚠️ Failed to load Whisper-{self.model_name} model: {e}. "
-                "Switching to mock mode."
+                "whisper_model_load_failed_mock_mode_fallback",
+                model=self.model_name,
+                error=str(e),
             )
             self._is_mock_mode = True
 
@@ -133,10 +95,10 @@ class CodeSwitchedASR:
 
         # Fallback to mock data if in mock mode
         if self._is_mock_mode or self._model is None:
-            logger.info("🎭 Using mock transcription (ASR model bypassed or unavailable).")
+            logger.info("using_mock_transcription_fallback", source_file=audio_path.name)
             return self._mock_transcribe(source_file=str(audio_path))
 
-        logger.info(f"🎤 Transcribing audio: {audio_path.name}...")
+        logger.info("transcribing_audio_file", file_name=audio_path.name)
         try:
             result = self._model.transcribe(
                 str(audio_path),
@@ -147,9 +109,9 @@ class CodeSwitchedASR:
             # Map dict segments to TranscriptSegment objects
             segments = [
                 TranscriptSegment(
-                    start=seg["start"],
-                    end=seg["end"],
-                    text=seg["text"].strip(),
+                    start=float(seg["start"]),
+                    end=float(seg["end"]),
+                    text=str(seg["text"]).strip(),
                 )
                 for seg in result.get("segments", [])
             ]
@@ -157,10 +119,7 @@ class CodeSwitchedASR:
             detected_lang = result.get("language", "vi")
             full_text = result.get("text", "").strip()
 
-            logger.success(
-                f"✅ Transcription complete! Language: {detected_lang}, "
-                f"Segments: {len(segments)}"
-            )
+            logger.info("transcription_completed", language=detected_lang, segments_count=len(segments))
 
             return TranscriptResult(
                 text=full_text,
@@ -170,7 +129,7 @@ class CodeSwitchedASR:
             )
 
         except Exception as e:
-            logger.error(f"❌ Transcription error: {e}. Falling back to mock mode.")
+            logger.error("transcription_execution_failed_falling_back", error=str(e))
             return self._mock_transcribe(source_file=str(audio_path))
 
     # ------------------------------------------------------------------
@@ -181,8 +140,7 @@ class CodeSwitchedASR:
 
         The correction algorithm:
             1. Sorts the teencode map by key length in descending order to avoid
-               nested abbreviation substitution bugs (e.g., replacing "loss fn"
-               before "fn").
+               nested abbreviation substitution bugs.
             2. Uses word boundary regex patterns to perform safe substitutions.
             3. Standardizes redundant whitespaces.
 
@@ -214,7 +172,7 @@ class CodeSwitchedASR:
 
         return corrected
 
-    def get_corrections(self, original: str, corrected: str) -> list[dict]:
+    def get_corrections(self, original: str, corrected: str) -> list[dict[str, int | str]]:
         """Compares original and corrected texts and extracts individual changes.
 
         Args:
@@ -248,36 +206,45 @@ class CodeSwitchedASR:
 
         Used when the physical Whisper model is bypassed or fails to load.
 
+        Args:
+            source_file: Name of the mock source file.
+
         Returns:
             A TranscriptResult preloaded with structured code-switched data.
         """
-        logger.info("🎭 Generating mock transcription — bilingual NLP lecture...")
+        logger.info("generating_mock_bilingual_nlp_lecture_transcription", file=source_file)
 
         # Simulating a realistic code-switched NLP lecture
         mock_segments = [
             TranscriptSegment(
-                start=0.0, end=5.2,
-                text="Xin chào các bạn, hôm nay chúng ta sẽ discuss về NLP"
+                start=0.0,
+                end=5.2,
+                text="Xin chào các bạn, hôm nay chúng ta sẽ discuss về NLP",
             ),
             TranscriptSegment(
-                start=5.2, end=12.8,
-                text="Đầu tiên mình sẽ explain về loss fn trong deep learning model"
+                start=5.2,
+                end=12.8,
+                text="Đầu tiên mình sẽ explain về loss fn trong deep learning model",
             ),
             TranscriptSegment(
-                start=12.8, end=20.1,
-                text="Các bạn cần submit bài trc dl nhé, ko là bị trừ điểm"
+                start=12.8,
+                end=20.1,
+                text="Các bạn cần submit bài trc dl nhé, ko là bị trừ điểm",
             ),
             TranscriptSegment(
-                start=20.1, end=28.5,
-                text="Bây giờ mình sẽ bđ phần attention mechanism trong transformer"
+                start=20.1,
+                end=28.5,
+                text="Bây giờ mình sẽ bđ phần attention mechanism trong transformer",
             ),
             TranscriptSegment(
-                start=28.5, end=35.0,
-                text="Cái lr nên set khoảng 2e-5 cho fine-tuning BERT"
+                start=28.5,
+                end=35.0,
+                text="Cái lr nên set khoảng 2e-5 cho fine-tuning BERT",
             ),
             TranscriptSegment(
-                start=35.0, end=42.3,
-                text="Mn nhớ review lại backprop và gradient descent trước buổi sau"
+                start=35.0,
+                end=42.3,
+                text="Mn nhớ review lại backprop và gradient descent trước buổi sau",
             ),
         ]
 

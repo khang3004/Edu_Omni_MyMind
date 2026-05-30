@@ -1,4 +1,4 @@
-"""EduMIND — All-in-One Multimodal Lecture Assistant
+"""EduMIND — All-in-One Multimodal Lecture Assistant.
 
 Integrated multimodal lecture assistant system:
   1. Bilingual Note-Taker (Code-Switched ASR).
@@ -8,15 +8,25 @@ Integrated multimodal lecture assistant system:
 Developed by HCMUS Underdogs.
 """
 
+from __future__ import annotations
+
 # Suppress annoying/verbose Hugging Face transformers warnings.
-# Streamlit's file watcher inspects modules dynamically, which triggers warning
-# logs from transformers' dynamic alias module attributes (like __path__).
 try:
     import transformers
+
     transformers.utils.logging.set_verbosity_error()
 except ImportError:
     pass
 
-__version__ = "1.0.0"
+from edumind.modules.rag_engine import MultimodalRAG
+from edumind.modules.speech_processor import CodeSwitchedASR
+from edumind.modules.vietmix_translator import VietMixTranslator
+
+__version__ = "2.0.0"
 __app_name__ = "EduMIND"
 
+__all__ = [
+    "MultimodalRAG",
+    "CodeSwitchedASR",
+    "VietMixTranslator",
+]

@@ -1,32 +1,21 @@
-"""EduMIND — VietMix Bilingual Machine Translator (Vi-En Code-Mixed Translation)
+"""EduMIND — VietMix Bilingual Machine Translator.
 
-This module handles machine translation of code-mixed (Vietnamese-English) text.
-Features:
-  1. Computes the Code-Mixing Index (CMI) to evaluate the linguistic mixing level.
-  2. Translates code-mixed text into standard English.
-  3. Translates code-mixed text into standard Vietnamese.
-  4. Provides token-level language identification.
-
-CMI Formula:
-    CMI = (N - max(w_L)) / N
-    Where:
-        N = total tokens (excluding symbols and punctuation)
-        w_L = token count of the dominant language
-    CMI = 0.0 → fully monolingual
-    CMI → 1.0 → highly code-mixed / language-switched
+Analyzes code-mixing index (CMI) and translates code-mixed (Vietnamese-English)
+text utilizing Strategy-based translation providers.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 
-from loguru import logger
+from edumind.core.logging import get_logger
+from edumind.models.translation import CMIResult, TokenLabel
+from edumind.services.translation.base import TranslationProvider
+from edumind.services.translation.huggingface import HuggingFaceTranslationProvider
 
+logger = get_logger(__name__)
 
-# ----------------------------------------------------------------------
-# Set of common Vietnamese words (used for token-level language ID)
-# ----------------------------------------------------------------------
+# Set of common Vietnamese words (used for token-level language identification)
 _VIETNAMESE_COMMON_WORDS: set[str] = {
     # Pronouns
     "tôi", "mình", "tớ", "ta", "chúng", "các", "bạn", "anh", "chị", "em",
@@ -48,120 +37,28 @@ _VIETNAMESE_COMMON_WORDS: set[str] = {
 }
 
 
-# ----------------------------------------------------------------------
-# Data Classes for CMI and Translation results
-# ----------------------------------------------------------------------
-@dataclass
-class TokenLabel:
-    """Represents a language label mapped to a specific token.
-
-    Attributes:
-        token: The original token string.
-        language: Identified language code ("vi", "en", or "other").
-        confidence: Confidence score of the classification (0.0 to 1.0).
-    """
-    token: str
-    language: str
-    confidence: float = 1.0
-
-
-@dataclass
-class CMIResult:
-    """Stores computed Code-Mixing Index (CMI) metrics.
-
-    Attributes:
-        score: The normalized CMI value (0.0 to 1.0).
-        total_tokens: Total tokens analyzed (N).
-        vi_count: Count of Vietnamese tokens.
-        en_count: Count of English tokens.
-        other_count: Count of non-alphabetic/punctuation tokens.
-        dominant_language: Identified dominant language code ("vi" or "en").
-        token_labels: Token-by-token language label mapping.
-    """
-    score: float
-    total_tokens: int
-    vi_count: int
-    en_count: int
-    other_count: int = 0
-    dominant_language: str = "vi"
-    token_labels: list[TokenLabel] = field(default_factory=list)
-
-
-# ----------------------------------------------------------------------
-# Fallback Dictionary Mapping for Rule-based Translation
-# ----------------------------------------------------------------------
-_VI_TO_EN_DICT: dict[str, str] = {
-    "hôm nay": "today", "mình": "I", "chúng ta": "we", "sẽ": "will",
-    "về": "about", "trong": "in", "của": "of", "cho": "for", "với": "with",
-    "và": "and", "là": "is", "có": "have", "được": "can", "cần": "need",
-    "phải": "must", "nhớ": "remember", "ôn": "review", "tập": "practice",
-    "bài": "lesson", "trước": "before", "sau": "after", "buổi": "session",
-    "tiếp": "next", "các bạn": "you all", "bắt đầu": "begin",
-    "đầu tiên": "first", "bây giờ": "now", "khoảng": "about",
-    "nên": "should", "nhé": "", "nha": "", "ạ": "",
-    "cái": "the", "này": "this", "đó": "that",
-}
-
-_EN_TO_VI_DICT: dict[str, str] = {
-    "discuss": "thảo luận", "explain": "giải thích", "submit": "nộp",
-    "review": "ôn tập", "model": "mô hình", "function": "hàm",
-    "loss": "hàm mất mát", "deep": "sâu", "learning": "học",
-    "attention": "cơ chế chú ý", "mechanism": "cơ chế",
-    "fine-tuning": "tinh chỉnh", "set": "đặt", "training": "huấn luyện",
-    "dataset": "tập dữ liệu", "token": "đơn vị từ vựng",
-    "embedding": "biểu diễn nhúng", "layer": "tầng", "output": "đầu ra",
-    "input": "đầu vào", "batch": "lô", "epoch": "vòng lặp",
-    "gradient": "đạo hàm", "weight": "trọng số", "bias": "độ lệch",
-    "accuracy": "độ chính xác", "precision": "độ chính xác dương",
-    "recall": "độ triệu hồi", "score": "điểm số",
-}
-
-
-# ----------------------------------------------------------------------
-# Main Class: VietMixTranslator
-# ----------------------------------------------------------------------
 class VietMixTranslator:
     """Translates code-mixed Vietnamese-English text and calculates mixing metrics.
 
-    Uses deep learning sequence-to-sequence models from HuggingFace when provided,
-    otherwise falls back gracefully to a dictionary-based translation system.
+    Uses an injected TranslationProvider strategy to delegate actual translation
+    operations, adhering to Single Responsibility and Open-Closed principles.
     """
 
-    def __init__(self, model_name: str = "none"):
+    def __init__(self, translation_provider: TranslationProvider | None = None):
         """Initializes the VietMixTranslator.
 
         Args:
-            model_name: HuggingFace translation model name. Set to "none" to bypass
-                deep learning models and use rule-based fallback exclusively.
+            translation_provider: Injected translation strategy. If None, resolves
+                lazily via the DI Container.
         """
-        self.model_name = model_name
-        self._model = None
-        self._tokenizer = None
-        self._use_model = False
+        self._provider = translation_provider
 
-        # Load machine translation model if requested
-        if model_name and model_name.lower() != "none":
-            self._load_model(model_name)
-
-    def _load_model(self, model_name: str) -> None:
-        """Loads a seq2seq translation model from Hugging Face.
-
-        Falls back automatically to rule-based translations if loading fails.
-        """
-        try:
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-            logger.info(f"🔄 Loading translation model: {model_name}...")
-            self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-            self._use_model = True
-            logger.success(f"✅ Loaded translation model: {model_name}")
-        except Exception as e:
-            logger.warning(
-                f"⚠️ Could not load translation model '{model_name}': {e}. "
-                "Defaulting to rule-based translation mode."
-            )
-            self._use_model = False
+    def _get_provider(self) -> TranslationProvider:
+        """Retrieves the active provider, resolving from container if not injected."""
+        if self._provider is None:
+            from edumind.core.container import get_translation_provider
+            self._provider = get_translation_provider()
+        return self._provider
 
     # ------------------------------------------------------------------
     # Token-Level Language Identification
@@ -236,9 +133,13 @@ class VietMixTranslator:
         """
         if not text or not text.strip():
             return CMIResult(
-                score=0.0, total_tokens=0,
-                vi_count=0, en_count=0, other_count=0,
-                dominant_language="unknown", token_labels=[],
+                score=0.0,
+                total_tokens=0,
+                vi_count=0,
+                en_count=0,
+                other_count=0,
+                dominant_language="unknown",
+                token_labels=[],
             )
 
         # Label tokens
@@ -288,9 +189,8 @@ class VietMixTranslator:
         Returns:
             Standardized English sentence.
         """
-        if self._use_model and self._model is not None:
-            return self._model_translate(text, target="en")
-        return self._rule_based_translate_to_english(text)
+        provider = self._get_provider()
+        return provider.translate_to_english(text)
 
     def translate_to_vietnamese(self, text: str) -> str:
         """Translates code-mixed Vietnamese-English text into clean Vietnamese.
@@ -301,103 +201,16 @@ class VietMixTranslator:
         Returns:
             Standardized Vietnamese sentence.
         """
-        if self._use_model and self._model is not None:
-            return self._model_translate(text, target="vi")
-        return self._rule_based_translate_to_vietnamese(text)
-
-    def _model_translate(self, text: str, target: str = "en") -> str:
-        """Executes translation using the HuggingFace Seq2Seq model.
-
-        Gracefully defaults to rule-based fallback if execution fails.
-        """
-        try:
-            prefix = f"translate to {target}: "
-            inputs = self._tokenizer(
-                prefix + text,
-                return_tensors="pt",
-                max_length=512,
-                truncation=True,
-            )
-            outputs = self._model.generate(
-                **inputs,
-                max_length=512,
-                num_beams=4,
-                early_stopping=True,
-            )
-            return self._tokenizer.decode(outputs[0], skip_special_tokens=True)
-        except Exception as e:
-            logger.warning(
-                f"⚠️ Deep learning model translation failed: {e}. "
-                "Defaulting to rule-based fallback translation."
-            )
-            if target == "en":
-                return self._rule_based_translate_to_english(text)
-            return self._rule_based_translate_to_vietnamese(text)
-
-    def _rule_based_translate_to_english(self, text: str) -> str:
-        """Maps Vietnamese words to English equivalents using pre-defined mapping.
-
-        Replaces longer phrases first to preserve nested mappings.
-
-        Args:
-            text: Code-mixed sentence.
-
-        Returns:
-            Rough translated English string.
-        """
-        result = text
-
-        # Sort mapping by key length in descending order to prioritize multi-word mappings
-        sorted_phrases = sorted(
-            _VI_TO_EN_DICT.items(),
-            key=lambda x: len(x[0]),
-            reverse=True,
-        )
-
-        for vi_phrase, en_phrase in sorted_phrases:
-            pattern = r"\b" + re.escape(vi_phrase) + r"\b"
-            result = re.sub(pattern, en_phrase, result, flags=re.IGNORECASE)
-
-        # Remove duplicate spaces
-        result = re.sub(r"\s+", " ", result).strip()
-
-        # Sentence casing
-        if result:
-            result = result[0].upper() + result[1:]
-
-        return result
-
-    def _rule_based_translate_to_vietnamese(self, text: str) -> str:
-        """Maps English words to Vietnamese equivalents using pre-defined mapping.
-
-        Args:
-            text: Code-mixed sentence.
-
-        Returns:
-            Rough translated Vietnamese string.
-        """
-        result = text
-
-        # Replace English terms with Vietnamese equivalents
-        sorted_words = sorted(
-            _EN_TO_VI_DICT.items(),
-            key=lambda x: len(x[0]),
-            reverse=True,
-        )
-
-        for en_word, vi_word in sorted_words:
-            pattern = r"\b" + re.escape(en_word) + r"\b"
-            result = re.sub(pattern, vi_word, result, flags=re.IGNORECASE)
-
-        # Standardize whitespace
-        result = re.sub(r"\s+", " ", result).strip()
-
-        return result
+        provider = self._get_provider()
+        return provider.translate_to_vietnamese(text)
 
     @property
     def is_model_loaded(self) -> bool:
         """Checks if a neural sequence-to-sequence translation model is active."""
-        return self._use_model and self._model is not None
+        provider = self._get_provider()
+        if isinstance(provider, HuggingFaceTranslationProvider):
+            return provider.is_model_loaded
+        return False
 
     @property
     def mode(self) -> str:

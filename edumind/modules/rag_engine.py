@@ -1,229 +1,158 @@
-"""EduMIND — Multimodal RAG Engine with Qdrant Vector Database
+"""EduMIND — Multimodal RAG Engine with Qdrant Vector Database.
 
 This module handles Retrieval-Augmented Generation (RAG) for teaching documents:
   1. Performs Layout-Aware PDF Chunking.
-  2. Embeds document chunks using Sentence-Transformers.
+  2. Embeds document chunks using Strategy-based embedding providers.
   3. Stores and queries vectors using Qdrant (in-memory or remote server).
-  4. Synthesizes contextual answers with source citations.
-
-Architecture:
-    MultimodalRAG
-    ├── ingest_pdf(path) → list[DocumentChunk]
-    ├── ingest_text(text, source) → list[DocumentChunk]
-    ├── embed_and_store(chunks)
-    ├── query(question, top_k) → list[RetrievedChunk]
-    ├── generate_answer(question, contexts) → str
-    └── clear_index()
-
-Usage:
-    rag = MultimodalRAG()
-    chunks = rag.ingest_pdf("lecture_slides.pdf")
-    rag.embed_and_store(chunks)
-    results = rag.query("How does attention mechanism work?")
+  4. Applies keyword-boosting, query expansion, and cross-encoder re-ranking.
+  5. Synthesizes contextual answers utilizing generative AI model providers.
 """
 
 from __future__ import annotations
 
-import hashlib
-import re
-import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+import re
 
-from loguru import logger
+import numpy as np
 
-# ----------------------------------------------------------------------
-# Global cache for sentence transformer models to avoid reloading
-# ----------------------------------------------------------------------
-_EMBEDDING_MODEL_CACHE: dict[str, Any] = {}
+from edumind.config import get_settings
+from edumind.core.exceptions import EmbeddingError, VectorStoreError
+from edumind.core.logging import get_logger
+from edumind.models.chunks import DocumentChunk, RetrievedChunk
+from edumind.services.embedding.base import EmbeddingProvider
+from edumind.services.llm.base import LLMProvider
+from edumind.services.vectorstore.base import VectorStore
+from edumind.utils.text import is_section_header, split_long_text
 
-
-# ----------------------------------------------------------------------
-# Data Classes for Document Chunks and Query Results
-# ----------------------------------------------------------------------
-@dataclass
-class DocumentChunk:
-    """Represents a single parsed text chunk with metadata.
-
-    Attributes:
-        text: The textual content of the chunk.
-        metadata: Associated metadata dictionary (e.g., page, source, section).
-        chunk_id: A unique identifier for the chunk.
-    """
-    text: str
-    metadata: dict = field(default_factory=dict)
-    chunk_id: str = ""
-
-    def __post_init__(self):
-        """Generates a unique chunk_id if not already provided."""
-        if not self.chunk_id:
-            content_hash = hashlib.md5(self.text.encode()).hexdigest()[:8]
-            self.chunk_id = f"chunk_{content_hash}_{uuid.uuid4().hex[:6]}"
+logger = get_logger(__name__)
 
 
-@dataclass
-class RetrievedChunk:
-    """Represents a matched chunk retrieved from vector search.
+class CrossEncoderReRanker:
+    """Optional cross-encoder re-ranking step for retrieved passages."""
 
-    Attributes:
-        text: Retrieved text content.
-        metadata: Original chunk metadata.
-        score: Cosine similarity score (0.0 to 1.0).
-    """
-    text: str
-    metadata: dict = field(default_factory=dict)
-    score: float = 0.0
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+        """Initializes the re-ranker.
+
+        Args:
+            model_name: HuggingFace model hub path.
+        """
+        self.model_name = model_name
+        self._model = None
+        self._attempted = False
+
+    def load(self) -> None:
+        """Lazily loads the Cross-Encoder model into memory."""
+        if self._attempted:
+            return
+        self._attempted = True
+        try:
+            from sentence_transformers import CrossEncoder
+
+            logger.info("loading_cross_encoder_model", model=self.model_name)
+            self._model = CrossEncoder(self.model_name)
+            logger.info("loaded_cross_encoder_model", model=self.model_name)
+        except Exception as e:
+            logger.warning(
+                "cross_encoder_load_failed_bypassing_reranker",
+                model=self.model_name,
+                error=str(e),
+            )
+            self._model = None
+
+    def re_rank(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        """Re-scores retrieved passages relative to the query.
+
+        Args:
+            query: User search query.
+            chunks: List of passages retrieved from vector search.
+
+        Returns:
+            Re-ordered list of chunks.
+        """
+        if not chunks:
+            return chunks
+
+        self.load()
+        if self._model is None:
+            return chunks
+
+        try:
+            pairs = [[query, c.text] for c in chunks]
+            # Predict similarity scores
+            scores = self._model.predict(pairs)
+
+            # Map raw logit scores to standard [0, 1] probability range via sigmoid
+            for chunk, score in zip(chunks, scores):
+                val = float(score)
+                sigmoid_score = 1.0 / (1.0 + np.exp(-val))
+                chunk.score = round(sigmoid_score, 4)
+
+            # Re-sort descending
+            return sorted(chunks, key=lambda x: x.score, reverse=True)
+        except Exception as e:
+            logger.warning("cross_encoder_rerank_failed_using_original", error=str(e))
+            return chunks
 
 
-# ----------------------------------------------------------------------
-# Main Class: MultimodalRAG
-# ----------------------------------------------------------------------
 class MultimodalRAG:
-    """Multimodal RAG engine using Qdrant vector database.
+    """Multimodal RAG engine utilizing injected vector stores, embeddings, and LLMs.
 
-    Handles layout-aware parsing, sentence-transformers text embeddings,
-    Qdrant search indexing, and citation-aware answer generation.
+    Fully complies with Dependency Injection, allowing modular test strategies and
+    caching implementations.
     """
 
     def __init__(
         self,
-        embedding_model_name: str | None = None,
-        qdrant_mode: str | None = None,
-        qdrant_host: str | None = None,
-        qdrant_port: int | None = None,
-        qdrant_api_key: str | None = None,
-        collection_name: str | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        vectorstore: VectorStore | None = None,
+        llm_provider: LLMProvider | None = None,
+        rerank_model_name: str | None = None,
     ):
         """Initializes the MultimodalRAG engine.
 
         Args:
-            embedding_model_name: Name of the Sentence-Transformers model.
-            qdrant_mode: Connection mode ("memory" or "server").
-            qdrant_host: Hostname of remote Qdrant server (for server mode).
-            qdrant_port: Port of remote Qdrant server (for server mode).
-            qdrant_api_key: Authentication API key for Qdrant Cloud.
-            collection_name: Target Qdrant collection name.
+            embedding_provider: Embedding model strategy. If None, resolves from container.
+            vectorstore: Vector database strategy. If None, resolves from container.
+            llm_provider: Answer generator strategy. If None, resolves from container.
+            rerank_model_name: Cross-encoder re-ranking model path (optional).
         """
-        # Load configuration defaults from settings
-        from edumind.config import settings
+        self._embedding_provider = embedding_provider
+        self._vectorstore = vectorstore
+        self._llm_provider = llm_provider
 
-        self._embedding_model_name = embedding_model_name or settings.EMBEDDING_MODEL
-        self._qdrant_mode = qdrant_mode or settings.QDRANT_MODE
-        self._qdrant_host = qdrant_host or settings.QDRANT_HOST
-        self._qdrant_port = qdrant_port or settings.QDRANT_PORT
-        self._qdrant_api_key = qdrant_api_key or settings.QDRANT_API_KEY
-        self._collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
+        # Setup cross-encoder re-ranker
+        self._reranker = (
+            CrossEncoderReRanker(rerank_model_name)
+            if rerank_model_name
+            else CrossEncoderReRanker()
+        )
 
-        # Internal state
-        self._embedding_model = None
-        self._qdrant_client = None
-        self._embedding_dim: int = 384  # Default dimension for all-MiniLM-L6-v2
-        self._is_ready = False
+    def _get_embedding_provider(self) -> EmbeddingProvider:
+        """Retrieves the active embedding provider, resolving from container if needed."""
+        if self._embedding_provider is None:
+            from edumind.core.container import get_embedding_provider
+            self._embedding_provider = get_embedding_provider()
+        return self._embedding_provider
 
-        # Initialize sub-components
-        self._load_embedding_model()
-        self._init_qdrant()
+    def _get_vectorstore(self) -> VectorStore:
+        """Retrieves the active vector store, resolving from container if needed."""
+        if self._vectorstore is None:
+            from edumind.core.container import get_vectorstore
+            self._vectorstore = get_vectorstore()
+        return self._vectorstore
 
-    # ------------------------------------------------------------------
-    # Initialization Methods
-    # ------------------------------------------------------------------
-    def _load_embedding_model(self) -> None:
-        """Loads the Sentence-Transformers model for text embedding.
-
-        Falls back automatically to mock embeddings (random vectors) if the model
-        fails to load.
-        """
-        try:
-            global _EMBEDDING_MODEL_CACHE
-            if self._embedding_model_name not in _EMBEDDING_MODEL_CACHE:
-                from sentence_transformers import SentenceTransformer
-                logger.info(f"📐 Loading embedding model: {self._embedding_model_name}...")
-                _EMBEDDING_MODEL_CACHE[self._embedding_model_name] = SentenceTransformer(self._embedding_model_name)
-
-            self._embedding_model = _EMBEDDING_MODEL_CACHE[self._embedding_model_name]
-
-            # Infer real dimensionality of the model
-            test_emb = self._embedding_model.encode(["test"])
-            self._embedding_dim = test_emb.shape[1]
-
-            logger.success(
-                f"✅ Loaded embedding model! Dimension: {self._embedding_dim}"
-            )
-        except Exception as e:
-            logger.warning(
-                f"⚠️ Could not load embedding model '{self._embedding_model_name}': {e}. "
-                "Using mock embedding fallback (random vectors)."
-            )
-            self._embedding_model = None
-
-    def _init_qdrant(self) -> None:
-        """Initializes the Qdrant client and verifies/creates the target collection.
-
-        Supports:
-            - "memory": In-process ephemeral database (ideal for dev/demo).
-            - "server": Remote server or Qdrant Cloud deployment.
-        """
-        try:
-            from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams
-
-            # Instantiate client based on configured mode
-            if self._qdrant_mode == "memory":
-                logger.info("🗄️ Initializing Qdrant in-memory mode...")
-                self._qdrant_client = QdrantClient(":memory:")
-            else:
-                logger.info(
-                    f"🗄️ Connecting to Qdrant server at: {self._qdrant_host}:{self._qdrant_port}..."
-                )
-                self._qdrant_client = QdrantClient(
-                    host=self._qdrant_host,
-                    port=self._qdrant_port,
-                    api_key=self._qdrant_api_key if self._qdrant_api_key else None,
-                )
-
-            # Check if collection already exists
-            collections = self._qdrant_client.get_collections().collections
-            existing_names = [c.name for c in collections]
-
-            if self._collection_name not in existing_names:
-                self._qdrant_client.create_collection(
-                    collection_name=self._collection_name,
-                    vectors_config=VectorParams(
-                        size=self._embedding_dim,
-                        distance=Distance.COSINE,
-                    ),
-                )
-                logger.success(
-                    f"✅ Created Qdrant collection: '{self._collection_name}' "
-                    f"(dim={self._embedding_dim}, distance=Cosine)"
-                )
-            else:
-                logger.info(f"📦 Qdrant collection '{self._collection_name}' already exists.")
-
-            self._is_ready = True
-
-        except ImportError:
-            logger.warning(
-                "⚠️ Library 'qdrant-client' is not installed. "
-                "The RAG engine is disabled."
-            )
-            self._is_ready = False
-        except Exception as e:
-            logger.warning(f"⚠️ Could not initialize Qdrant database: {e}")
-            self._is_ready = False
+    def _get_llm_provider(self) -> LLMProvider:
+        """Retrieves the active LLM provider, resolving from container if needed."""
+        if self._llm_provider is None:
+            from edumind.core.container import get_llm_provider
+            self._llm_provider = get_llm_provider()
+        return self._llm_provider
 
     # ------------------------------------------------------------------
     # Ingestion & Layout-Aware Parsing
     # ------------------------------------------------------------------
     def ingest_pdf(self, pdf_path: str | Path) -> list[DocumentChunk]:
         """Parses a PDF using layout-aware paragraph and heading splitting.
-
-        Layout-Aware Parsing Algorithm:
-            1. Reads pages sequentially using pypdf.
-            2. Identifies section headers (short lines, numbered, or ALL CAPS).
-            3. Clusters remaining text lines into coherent paragraphs.
-            4. Emits chunks annotated with rich metadata.
 
         Args:
             pdf_path: Path to the target PDF file.
@@ -238,7 +167,7 @@ class MultimodalRAG:
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file does not exist: {pdf_path}")
 
-        logger.info(f"📄 Ingesting PDF file: {pdf_path.name}...")
+        logger.info("ingesting_pdf_file", file_name=pdf_path.name)
 
         try:
             from pypdf import PdfReader
@@ -261,16 +190,14 @@ class MultimodalRAG:
                 chunks.extend(page_chunks)
                 chunk_index += len(page_chunks)
 
-            logger.success(
-                f"✅ Ingested PDF '{pdf_path.name}': {len(reader.pages)} pages → {len(chunks)} chunks"
-            )
+            logger.info("pdf_ingested_successfully", pages=len(reader.pages), chunks=len(chunks))
             return chunks
 
         except ImportError:
-            logger.error("❌ Library 'pypdf' is not installed!")
+            logger.error("pypdf_library_missing", reason="pypdf is not installed")
             return []
         except Exception as e:
-            logger.error(f"❌ Error during PDF ingestion: {e}")
+            logger.error("pdf_ingestion_failed", file=pdf_path.name, error=str(e))
             return []
 
     def ingest_text(
@@ -299,12 +226,11 @@ class MultimodalRAG:
             start_chunk_index=0,
         )
 
-        # Merge extra metadata if supplied
         if metadata_extra:
             for chunk in chunks:
                 chunk.metadata.update(metadata_extra)
 
-        logger.info(f"📝 Raw Text '{source_name}': processed into {len(chunks)} chunks")
+        logger.info("raw_text_ingested", source=source_name, chunks=len(chunks))
         return chunks
 
     def _layout_aware_split(
@@ -316,11 +242,7 @@ class MultimodalRAG:
         max_chunk_size: int = 500,
         overlap: int = 50,
     ) -> list[DocumentChunk]:
-        """Splits raw text of a page into paragraphs based on structural layout.
-
-        Identifies headings to create logical boundaries, and ensures paragraphs
-        exceeding max_chunk_size are split with overlap.
-        """
+        """Splits raw text of a page into paragraphs based on structural layout."""
         lines = text.split("\n")
         chunks: list[DocumentChunk] = []
         current_section = "Untitled Section"
@@ -330,12 +252,12 @@ class MultimodalRAG:
         for line in lines:
             stripped = line.strip()
 
-            if self._is_header(stripped):
-                # Flush the current paragraph before changing sections
+            if is_section_header(stripped):
+                # Flush existing paragraph
                 if current_paragraph:
                     para_text = " ".join(current_paragraph).strip()
                     if para_text:
-                        for sub_chunk in self._split_long_text(para_text, max_chunk_size, overlap):
+                        for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
                             chunks.append(DocumentChunk(
                                 text=sub_chunk,
                                 metadata={
@@ -348,16 +270,14 @@ class MultimodalRAG:
                             ))
                             idx += 1
                     current_paragraph = []
-
-                # Update the active section header
                 current_section = stripped
 
             elif stripped == "":
-                # Empty line marks paragraph boundary
+                # Empty line boundary
                 if current_paragraph:
                     para_text = " ".join(current_paragraph).strip()
                     if para_text:
-                        for sub_chunk in self._split_long_text(para_text, max_chunk_size, overlap):
+                        for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
                             chunks.append(DocumentChunk(
                                 text=sub_chunk,
                                 metadata={
@@ -371,14 +291,13 @@ class MultimodalRAG:
                             idx += 1
                     current_paragraph = []
             else:
-                # Append standard lines to the current paragraph block
                 current_paragraph.append(stripped)
 
-        # Flush any trailing paragraph
+        # Flush trailing
         if current_paragraph:
             para_text = " ".join(current_paragraph).strip()
             if para_text:
-                for sub_chunk in self._split_long_text(para_text, max_chunk_size, overlap):
+                for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
                     chunks.append(DocumentChunk(
                         text=sub_chunk,
                         metadata={
@@ -393,72 +312,6 @@ class MultimodalRAG:
 
         return chunks
 
-    @staticmethod
-    def _is_header(line: str) -> bool:
-        """Determines if a given line qualifies structurally as a section header.
-
-        Rules:
-            1. Short lines (< 100 chars) written in ALL CAPS.
-            2. Lines ending with a colon ':'.
-            3. Lines starting with numbered indexes (e.g., '1.', '2.1', 'Chương 1').
-
-        Args:
-            line: Text line string to inspect.
-
-        Returns:
-            True if the line is identified as a heading.
-        """
-        if not line or len(line) < 2:
-            return False
-
-        # ALL CAPS check for short lines
-        alpha_chars = [c for c in line if c.isalpha()]
-        if alpha_chars and all(c.isupper() for c in alpha_chars) and len(line) < 100:
-            return True
-
-        # Heading ends with colon
-        if line.endswith(":") and len(line) < 100:
-            return True
-
-        # Numbered index patterns (e.g., "1. Introduction", "2.1 Background", "Chapter 3")
-        if re.match(r"^\d+(\.\d+)*\.?\s", line) or re.match(r"^(Chapter|Chương|Bài|Phần)\s", line, re.IGNORECASE):
-            return True
-
-        return False
-
-    @staticmethod
-    def _split_long_text(text: str, max_size: int, overlap: int) -> list[str]:
-        """Slices a long text into overlapping chunks cleanly at word boundaries.
-
-        Args:
-            text: Large paragraph text to slice.
-            max_size: Maximum character length allowed per slice.
-            overlap: Slicing character overlap size.
-
-        Returns:
-            A list of text strings representing the sub-chunks.
-        """
-        if len(text) <= max_size:
-            return [text]
-
-        parts: list[str] = []
-        start = 0
-        while start < len(text):
-            end = start + max_size
-
-            # Attempt to split gracefully at sentence or word boundaries
-            if end < len(text):
-                best_break = text.rfind(". ", start, end)
-                if best_break == -1 or best_break <= start:
-                    best_break = text.rfind(" ", start, end)
-                if best_break > start:
-                    end = best_break + 1
-
-            parts.append(text[start:end].strip())
-            start = end - overlap if end < len(text) else end
-
-        return [p for p in parts if p]
-
     # ------------------------------------------------------------------
     # Vector Indexing & Retrieval
     # ------------------------------------------------------------------
@@ -472,132 +325,106 @@ class MultimodalRAG:
             The number of successfully indexed chunks.
         """
         if not chunks:
-            logger.warning("⚠️ Empty chunks list provided; nothing to index.")
+            logger.warning("empty_chunks_list_provided_indexing_skipped")
             return 0
 
-        if not self._is_ready or self._qdrant_client is None:
-            logger.error("❌ Qdrant vector database is not ready; cannot store chunks.")
-            return 0
-
-        logger.info(f"📐 Generating embeddings for {len(chunks)} chunks...")
-
-        # Compute embeddings
-        texts = [c.text for c in chunks]
-        embeddings = self._encode_texts(texts)
-
-        if embeddings is None:
-            logger.error("❌ Text embedding generation failed.")
-            return 0
-
-        # Construct payload structures for Qdrant
-        from qdrant_client.models import PointStruct
-
-        points = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            point_id = str(uuid.uuid4())
-            points.append(PointStruct(
-                id=point_id,
-                vector=embedding.tolist(),
-                payload={
-                    "text": chunk.text,
-                    "chunk_id": chunk.chunk_id,
-                    **chunk.metadata,
-                },
-            ))
-
-        # Perform batch upsert
         try:
-            self._qdrant_client.upsert(
-                collection_name=self._collection_name,
-                points=points,
-            )
-            logger.success(f"✅ Successfully indexed {len(points)} chunks into Qdrant!")
-            return len(points)
+            emb_provider = self._get_embedding_provider()
+            vectorstore = self._get_vectorstore()
+
+            logger.info("generating_embeddings_for_ingested_chunks", count=len(chunks))
+            texts = [c.text for c in chunks]
+            embeddings = emb_provider.encode(texts)
+
+            indexed_count = vectorstore.upsert(chunks, embeddings)
+            logger.info("indexing_completed", indexed_count=indexed_count)
+            return indexed_count
+        except (EmbeddingError, VectorStoreError) as e:
+            logger.error("indexing_pipeline_failed", error=str(e))
+            return 0
         except Exception as e:
-            logger.error(f"❌ Failed to upsert points into Qdrant: {e}")
+            logger.error("unexpected_error_during_indexing", error=str(e))
             return 0
 
-    def _encode_texts(self, texts: list[str]):
-        """Generates embedding representations for list of texts.
-
-        Uses the active SentenceTransformer model, falling back to safe random
-        vectors (mock) if the model is bypassed or fails.
-        """
-        if self._embedding_model is not None:
-            try:
-                return self._embedding_model.encode(
-                    texts,
-                    show_progress_bar=False,
-                    batch_size=32,
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ Model embedding error: {e}. Falling back to mock vectors.")
-
-        # Simulated fallback (random vectors)
-        import numpy as np
-        logger.info("🎭 Using simulated mock embeddings (random vectors).")
-        return np.random.randn(len(texts), self._embedding_dim).astype(np.float32)
-
     # ------------------------------------------------------------------
-    # Retrieval-Augmented Generation & Querying
+    # Query Expansion and Hybrid Retrieval
     # ------------------------------------------------------------------
+    def _expand_query(self, query: str) -> str:
+        """Applies query expansion by resolving abbreviations/teencode."""
+        settings = get_settings()
+        teencode_map = settings.TEENCODE_MAP
+
+        expanded = query
+        # Sort key lengths descending to prevent partial substitutions
+        sorted_keys = sorted(teencode_map.keys(), key=len, reverse=True)
+
+        for abbr in sorted_keys:
+            pattern = r"\b" + re.escape(abbr) + r"\b"
+            expanded = re.sub(pattern, teencode_map[abbr], expanded, flags=re.IGNORECASE)
+
+        # Deduplicate multiple spaces
+        expanded = re.sub(r"\s+", " ", expanded).strip()
+
+        if expanded != query:
+            logger.info("query_expanded", original=query, expanded=expanded)
+        return expanded
+
+    def _apply_keyword_boost(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        """Boosts RetrievedChunk cosine scores based on exact lexical keyword hits."""
+        query_words = set(re.findall(r"\w+", query.lower()))
+        if not query_words:
+            return chunks
+
+        for chunk in chunks:
+            chunk_words = set(re.findall(r"\w+", chunk.text.lower()))
+            common_words = query_words.intersection(chunk_words)
+            overlap_ratio = len(common_words) / len(query_words)
+            # Add up to 0.1 lexical boost
+            boost = round(0.10 * overlap_ratio, 4)
+            chunk.score = min(1.0, chunk.score + boost)
+
+        return sorted(chunks, key=lambda x: x.score, reverse=True)
+
     def query(self, question: str, top_k: int = 5) -> list[RetrievedChunk]:
-        """Queries the Qdrant database using semantic similarity search.
-
-        Supports modern QdrantClient unified query API with older method fallback.
+        """Queries the vector index applying semantic search and hybrid re-ranking.
 
         Args:
-            question: Search query / question text.
-            top_k: Number of nearest matches to return.
+            question: Search query.
+            top_k: Number of matches to return.
 
         Returns:
-            A list of RetrievedChunk objects sorted by descending similarity scores.
+            Sorted list of RetrievedChunk matches.
         """
-        if not self._is_ready or self._qdrant_client is None:
-            logger.error("❌ Qdrant vector database is not ready; query aborted.")
-            return []
-
         if not question or not question.strip():
             return []
 
-        logger.info(f"🔍 Querying database for: '{question[:50]}...'")
-
-        # Embed search query
-        query_embedding = self._encode_texts([question])
-        if query_embedding is None:
-            return []
-
-        # Query index
         try:
-            if hasattr(self._qdrant_client, "query_points"):
-                response = self._qdrant_client.query_points(
-                    collection_name=self._collection_name,
-                    query=query_embedding[0].tolist(),
-                    limit=top_k,
-                )
-                results = response.points
-            else:
-                results = self._qdrant_client.search(
-                    collection_name=self._collection_name,
-                    query_vector=query_embedding[0].tolist(),
-                    limit=top_k,
-                )
+            emb_provider = self._get_embedding_provider()
+            vectorstore = self._get_vectorstore()
 
-            retrieved = []
-            for hit in results:
-                payload = hit.payload or {}
-                text = payload.pop("text", "")
-                retrieved.append(RetrievedChunk(
-                    text=text,
-                    metadata=payload,
-                    score=round(hit.score, 4),
-                ))
+            # 1. Query Expansion (teencode resolution)
+            expanded_query = self._expand_query(question)
 
-            logger.success(f"✅ Found {len(retrieved)} relevant results!")
-            return retrieved
+            # 2. Embed query
+            query_vector = emb_provider.encode([expanded_query])[0].tolist()
 
+            # 3. Vector Database retrieval
+            retrieved = vectorstore.search(query_vector, limit=top_k * 2)
+
+            # 4. Keyword Boosting (Lexical Hybrid component)
+            boosted = self._apply_keyword_boost(expanded_query, retrieved)
+
+            # 5. Optional Cross-Encoder Re-ranking
+            re_ranked = self._reranker.re_rank(expanded_query, boosted)
+
+            # 6. Clamp to top-K
+            return re_ranked[:top_k]
+
+        except (EmbeddingError, VectorStoreError) as e:
+            logger.error("retrieval_failed", error=str(e))
+            return []
         except Exception as e:
-            logger.error(f"❌ Error querying Qdrant: {e}")
+            logger.error("unexpected_retrieval_failure", error=str(e))
             return []
 
     def generate_answer(
@@ -605,103 +432,60 @@ class MultimodalRAG:
         question: str,
         contexts: list[RetrievedChunk],
     ) -> str:
-        """Synthesizes a structured, citation-annotated answer using context chunks.
+        """Delegates educational answer synthesis to the injected LLM provider strategy.
 
         Args:
-            question: The original user question.
-            contexts: List of RetrievedChunk matched items.
+            question: Original student question.
+            contexts: Retrieved relevant context chunks.
 
         Returns:
             A formatted string containing answer synthesis and citations.
         """
-        if not contexts:
-            return (
-                "❌ No relevant information found in the uploaded documents. "
-                "Please try asking another question or uploading more files."
-            )
+        try:
+            llm_provider = self._get_llm_provider()
+            return llm_provider.generate(question, contexts)
+        except Exception as e:
+            logger.error("answer_generation_failed", error=str(e))
+            # Graceful local template fallback
+            from edumind.services.llm.template import TemplateLLMProvider
 
-        answer_parts: list[str] = []
-        answer_parts.append(f"📋 **Question:** {question}\n")
-        answer_parts.append("📖 **Synthesized Answer from Documents:**\n")
-
-        # Synthesize answers from top-3 relevant context chunks
-        for i, ctx in enumerate(contexts[:3], start=1):
-            page = ctx.metadata.get("page_number", "?")
-            source = ctx.metadata.get("source_file", "Unknown")
-            section = ctx.metadata.get("section_header", "")
-
-            citation = f"[Page {page}, {source}]"
-            if section and section != "Untitled Section":
-                citation = f"[Page {page}, {source} — §{section}]"
-
-            text_preview = ctx.text[:300] + "..." if len(ctx.text) > 300 else ctx.text
-            answer_parts.append(
-                f"**{i}.** {text_preview}\n   — *{citation}* (Relevance: {ctx.score:.2f})\n"
-            )
-
-        # Footer
-        answer_parts.append(
-            "\n💡 *Note: The answers above are synthesized directly from your matched "
-            "document contexts. Verify with original sources for maximum accuracy.*"
-        )
-
-        return "\n".join(answer_parts)
+            fallback = TemplateLLMProvider()
+            return fallback.generate(question, contexts)
 
     # ------------------------------------------------------------------
-    # Maintenance & Utility Methods
+    # Maintenance Methods
     # ------------------------------------------------------------------
     def clear_index(self) -> bool:
-        """Wipes the active Qdrant collection completely and re-creates it.
-
-        Returns:
-            True if collection was cleared and re-created successfully.
-        """
-        if not self._is_ready or self._qdrant_client is None:
-            return False
-
+        """Wipes the vector index collection completely."""
         try:
-            from qdrant_client.models import Distance, VectorParams
-
-            self._qdrant_client.delete_collection(self._collection_name)
-            self._qdrant_client.create_collection(
-                collection_name=self._collection_name,
-                vectors_config=VectorParams(
-                    size=self._embedding_dim,
-                    distance=Distance.COSINE,
-                ),
-            )
-            logger.info(f"🗑️ Cleared and re-created Qdrant collection '{self._collection_name}'")
-            return True
+            vectorstore = self._get_vectorstore()
+            return vectorstore.clear_index()
         except Exception as e:
-            logger.error(f"❌ Error clearing collection: {e}")
+            logger.error("clear_index_failed", error=str(e))
             return False
 
     def get_collection_info(self) -> dict:
-        """Retrieves operational schema and point counts of the Qdrant collection.
-
-        Returns:
-            A status dictionary of the collection statistics.
-        """
-        if not self._is_ready or self._qdrant_client is None:
-            return {"status": "not_ready", "count": 0}
-
+        """Retrieves collection statistics."""
         try:
-            info = self._qdrant_client.get_collection(self._collection_name)
-            return {
-                "status": "ready",
-                "collection_name": self._collection_name,
-                "vectors_count": getattr(info, "indexed_vectors_count", getattr(info, "vectors_count", 0)),
-                "points_count": info.points_count,
-            }
+            vectorstore = self._get_vectorstore()
+            return vectorstore.collection_info()
         except Exception as e:
             return {"status": "error", "error": str(e), "count": 0}
 
     @property
     def is_ready(self) -> bool:
-        """Checks if the RAG engine and database backend are fully functional."""
-        return self._is_ready
+        """Checks if RAG vector DB is fully functional."""
+        try:
+            vectorstore = self._get_vectorstore()
+            return vectorstore.is_ready
+        except Exception:
+            return False
 
     @property
     def has_embedding_model(self) -> bool:
-        """Checks if the physical text embedding model is loaded."""
-        return self._embedding_model is not None
+        """Checks if embedding model is ready."""
+        try:
+            emb = self._get_embedding_provider()
+            return not isinstance(emb, MockEmbeddingProvider)
+        except Exception:
+            return False

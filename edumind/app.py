@@ -285,17 +285,17 @@ def inject_custom_css():
 @st.cache_resource(show_spinner=False)
 def load_asr_module():
     """Instantiates and caches the speech recognition module."""
-    from edumind.config import settings
+    from edumind.config import get_settings
     from edumind.modules.speech_processor import CodeSwitchedASR
+    settings = get_settings()
     return CodeSwitchedASR(model_name=settings.WHISPER_MODEL)
 
 
 @st.cache_resource(show_spinner=False)
 def load_translator_module():
     """Instantiates and caches the bilingual translation module."""
-    from edumind.config import settings
     from edumind.modules.vietmix_translator import VietMixTranslator
-    return VietMixTranslator(model_name=settings.TRANSLATION_MODEL)
+    return VietMixTranslator()
 
 
 @st.cache_resource(show_spinner=False)
@@ -320,7 +320,8 @@ def render_sidebar():
 
         st.markdown("### ⚡ System Status")
 
-        from edumind.config import settings
+        from edumind.config import get_settings
+        settings = get_settings()
 
         # Device status
         device_str = str(settings.DEVICE)
@@ -407,7 +408,7 @@ def render_sidebar():
 
         st.markdown("### ℹ️ About")
         st.markdown(
-            "**EduMIND v1.0.0** — MVP\n\n"
+            "**EduMIND v2.0.0** — Production-Ready Enterprise Standard\n\n"
             "An integrated multimodal lecture note-taking, translation, "
             "and question-answering assistant.\n\n"
             "🏫 *HCMUS Underdogs Team*"
