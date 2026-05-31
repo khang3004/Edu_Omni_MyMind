@@ -1,0 +1,70 @@
+# =============================================================================
+# EduMIND × Label Studio — ML Backend Dockerfile
+# =============================================================================
+# Base image: python:3.10-slim (matches pyproject.toml requires-python ~=3.10)
+# Build context: project root (docker build -f Dockerfile.label-studio .)
+# Uses 'uv' for fast, reproducible dependency installation from uv.lock.
+# =============================================================================
+
+FROM python:3.10-slim AS base
+
+# --- System dependencies ------------------------------------------------------
+# ffmpeg: required by openai-whisper for audio decoding
+# libgomp1: required by sentence-transformers (OpenMP for CPU parallelism)
+# git: required by HuggingFace / other VCS dependencies if any
+# curl: required for health-checking
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libgomp1 \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Python environment -------------------------------------------------------
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+
+# --- Install uv --------------------------------------------------------------
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# --- Copy project configurations first for dependency caching ----------------
+COPY pyproject.toml uv.lock README.md LICENSE ./
+
+# --- Create dummy package directory for flit & uv dependency installation ---
+RUN mkdir edumind && touch edumind/__init__.py
+
+# --- Install system-wide python dependencies via uv --------------------------
+# --system: Installs packages directly into the system python environment
+# ".[label-studio]": Installs the package along with the label-studio optional dependency group
+RUN uv pip install --system ".[label-studio]"
+
+
+# --- Copy remaining source files ---------------------------------------------
+COPY edumind/ ./edumind/
+COPY label_studio_backend/ ./label_studio_backend/
+
+# --- Install EduMIND in editable mode (without rebuilding dependencies) ------
+RUN uv pip install --system -e . --no-deps
+
+# --- Data directories (populated via volume mounts in docker-compose) ---------
+RUN mkdir -p data/raw/audio_chunks \
+             data/raw/pdf_slides \
+             data/processed
+
+# --- Non-root user for security -----------------------------------------------
+RUN useradd -m -u 1000 edumind && chown -R edumind:edumind /workspace
+USER edumind
+
+# --- Expose ML Backend port ---------------------------------------------------
+EXPOSE 9090
+
+# --- Health-check: confirm the backend is responding -------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:9090/health || exit 1
+
+# --- Entrypoint ---------------------------------------------------------------
+CMD ["label-studio-ml", "start", "/workspace/label_studio_backend", \
+     "--host", "0.0.0.0", \
+     "--port", "9090"]

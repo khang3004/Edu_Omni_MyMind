@@ -39,10 +39,10 @@ format:
 
 
 
-## Run tests
+## Run all unit and integration tests via pytest
 .PHONY: test
-test:
-	$(PYTHON_INTERPRETER) -m unittest discover -s tests
+test: requirements
+	$(PYTHON_INTERPRETER) -m pytest tests/ -v
 
 
 ## Set up Python interpreter environment
@@ -66,10 +66,36 @@ create_environment:
 app: requirements
 	$(PYTHON_INTERPRETER) -m streamlit run edumind/app.py --server.headless true
 
-## Run EduMIND tests
+## Run EduMIND tests via pytest
 .PHONY: test-edumind
 test-edumind: requirements
 	$(PYTHON_INTERPRETER) -m pytest tests/ -v
+
+## Install Label Studio host requirements
+.PHONY: install-ls
+install-ls:
+	uv sync --extra label-studio
+	uv pip install label-studio
+
+## Launch Label Studio and ML backend locally on host
+.PHONY: run-ls
+run-ls: install-ls
+	bash label_studio_backend/setup_env.sh
+
+## Start the containerized Label Studio stack (UI + ML Backend)
+.PHONY: docker-up
+docker-up:
+	docker compose up --build -d
+
+## Stop the containerized Label Studio stack
+.PHONY: docker-down
+docker-down:
+	docker compose down
+
+## View logs for the containerized Label Studio stack
+.PHONY: docker-logs
+docker-logs:
+	docker compose logs -f
 
 
 #################################################################################

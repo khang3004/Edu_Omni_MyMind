@@ -1,0 +1,113 @@
+# =============================================================================
+
+# EduMIND × Label Studio — Docker Compose Stack
+# =============================================================================
+# Services:
+#   label-studio  — Label Studio annotation UI (port 8080)
+#   ml-backend    — EduMIND ML Backend / active-learning server (port 9090)
+#
+# Usage:
+#   docker compose up --build
+# =============================================================================
+
+x-common-env: &common-env
+  # Shared secrets — create a .env file at the project root to override these.
+  LABEL_STUDIO_HOST: "http://localhost:8080"
+  GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
+  QDRANT_MODE: "${QDRANT_MODE:-memory}"
+  QDRANT_HOST: "${QDRANT_HOST:-localhost}"
+  QDRANT_PORT: "${QDRANT_PORT:-6333}"
+  WHISPER_MODEL: "${WHISPER_MODEL:-tiny}"
+  EMBEDDING_MODEL: "${EMBEDDING_MODEL:-all-MiniLM-L6-v2}"
+  TRANSLATION_MODEL: "${TRANSLATION_MODEL:-Helsinki-NLP/opus-mt-vi-en}"
+  DEVICE: "${DEVICE:-cpu}"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Label Studio — Annotation UI
+  # ---------------------------------------------------------------------------
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: edumind_label_studio
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *common-env
+      # Enable local file serving so tasks can reference host files directly
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      # The document root inside the container (mapped to project ./data)
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /workspace/data
+      # Pre-create admin credentials
+      LABEL_STUDIO_USERNAME: "${LABEL_STUDIO_USERNAME:-admin@edumind.local}"
+      LABEL_STUDIO_PASSWORD: "${LABEL_STUDIO_PASSWORD:-edumind_admin_2024}"
+      # Trust origins for Django CSRF checks
+      CSRF_TRUSTED_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      # Disable update checks and analytics for faster startup and loading
+      LABEL_STUDIO_DISABLE_UPDATE_CHECK: "true"
+      LABEL_STUDIO_NO_ANALYTICS: "true"
+    volumes:
+      # Persist Label Studio database and media
+      - label_studio_data:/label-studio/data
+      # Expose project data tree for local file serving
+      - ./data:/workspace/data:ro
+    networks:
+      - edumind_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+
+
+  # ---------------------------------------------------------------------------
+  # EduMIND ML Backend — Active-Learning Server
+  # ---------------------------------------------------------------------------
+  ml-backend:
+    build:
+      context: .                                 # project root as build context
+      dockerfile: Dockerfile.label-studio
+    image: edumind/ml-backend:latest
+    container_name: edumind_ml_backend
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    environment:
+      <<: *common-env
+      # Override corpus path to a container-internal mounted path
+      CORPUS_JSONL_PATH: /workspace/data/processed/corpus.jsonl
+      # ML Backend host / port
+      ML_BACKEND_HOST: "0.0.0.0"
+      ML_BACKEND_PORT: "9090"
+    volumes:
+      # Bind-mount project source for editable edumind changes without rebuild
+      - ./edumind:/workspace/edumind:ro
+      # Read-write data directory: audio chunks, PDFs, corpus JSONL
+      - ./data:/workspace/data
+    networks:
+      - edumind_net
+    depends_on:
+      label-studio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s    # Whisper model download on first boot may take time
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  label_studio_data:
+    driver: local
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  edumind_net:
+    driver: bridge

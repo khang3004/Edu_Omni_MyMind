@@ -41,6 +41,14 @@ dependencies = [
 ]
 requires-python = "~=3.10.0"
 
+[project.optional-dependencies]
+label-studio = [
+    "label-studio-ml>=1.0.9,<2.0.0",
+    "redis",
+    "rq",
+]
+
+
 
 [tool.ruff]
 line-length = 100
