@@ -1,0 +1,38 @@
+name: Continuous Integration (MLOps Pipeline)
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    code-quality-and-test:
+        name: Code Quality & Testing Suite
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+
+            - name: Install uv (Ultra-fast Package Manager)
+              uses: astral-sh/setup-uv@v5
+              with:
+                  version: "latest"
+                  enable-cache: true # Caches venv for faster sequential builds
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version-file: "pyproject.toml"
+
+            - name: Lint and Format Audit via Ruff
+              run: |
+                  uv pip install ruff
+                  ruff check .
+                  ruff format --check .
+
+            - name: Run PyTorch Architecture & Dataset Unit Tests
+              run: |
+                  uv sync
+                  uv run pytest tests/
