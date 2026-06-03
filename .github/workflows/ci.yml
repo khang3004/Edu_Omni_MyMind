@@ -29,10 +29,9 @@ jobs:
             - name: Lint and Format Audit via Ruff
               run: |
                   uv pip install ruff
-                  ruff check .
-                  ruff format --check .
+                  make format
 
             - name: Run PyTorch Architecture & Dataset Unit Tests
               run: |
                   uv sync
-                  uv run pytest tests/
+                  make test
