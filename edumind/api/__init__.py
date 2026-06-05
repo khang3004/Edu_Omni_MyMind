@@ -1,0 +1,1 @@
+"""EduMIND FastAPI Application Package."""

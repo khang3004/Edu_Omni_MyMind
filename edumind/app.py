@@ -1,39 +1,43 @@
 """EduMIND — Interactive Streamlit Dashboard.
 
-Interactive web interface for the EduMIND Multimodal Lecture Assistant system.
-Contains 4 main functional tabs:
-    🎙️ Tab 1: Bilingual Note-Taker — Real-time speech transcription & correction.
-    🔄 Tab 2: VietMix Translation — Code-mixed machine translation & CMI analytics.
-    📚 Tab 3: Anti-Forget RAG — Intelligent layout-aware PDF indexing & vector QA.
-    🧠 Tab 4: ALL-IN-ONE Pipeline — Unified end-to-end integration pipeline.
+Interactive web interface for the EduMIND Multimodal Lecture Assistant.
+Contains 4 distinct, non-overlapping functional tabs:
+
+    🎙️ Tab 1: Speech-to-Text    — Audio transcription + teencode correction
+    🔄 Tab 2: VietMix Translator — CMI analysis + bidirectional translation
+    📚 Tab 3: Knowledge Base     — PDF ingestion (§A) + Semantic Q&A (§B)
+    🕸️ Tab 4: Knowledge Graph   — Concept relationship explorer
 
 Run:
     streamlit run edumind/app.py
     # or
     make app
+
+The FastAPI REST layer runs separately on port 8000:
+    make api          → launches uvicorn on :8000
+    make dev          → launches both API + UI concurrently
 """
 
 from __future__ import annotations
 
-# Suppress annoying/verbose Hugging Face transformers warnings.
-# Streamlit's file watcher inspects modules dynamically, which triggers warning
-# logs from transformers' dynamic alias module attributes (like __path__).
+# Suppress HuggingFace transformers verbose warnings (Streamlit file-watcher)
 try:
     import transformers
     transformers.utils.logging.set_verbosity_error()
 except ImportError:
     pass
 
-from pathlib import Path
+import gc
 import tempfile
+from pathlib import Path
 
 import streamlit as st
 
 from edumind.utils.data_manager import ensure_data_dirs, get_raw_dir, get_storage_stats
 
-# ----------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Page Configuration
-# ----------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="EduMIND — Multimodal Lecture Assistant",
     page_icon="🧠",
@@ -42,55 +46,42 @@ st.set_page_config(
 )
 
 
-# ----------------------------------------------------------------------
-# Inject Custom Premium Stylesheets (Dark Theme / Glassmorphism)
-# ----------------------------------------------------------------------
-def inject_custom_css():
-    """Injects custom high-end premium CSS styles into the Streamlit session."""
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared Premium CSS (Dark Theme / Glassmorphism)
+# ──────────────────────────────────────────────────────────────────────────────
+def _inject_css() -> None:
     st.markdown("""
     <style>
-    /* ===== Google Font ===== */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-    /* ===== Root Variables ===== */
     :root {
-        --bg-primary: #0E1117;
         --bg-card: rgba(17, 25, 40, 0.75);
         --border-glass: rgba(255, 255, 255, 0.08);
-        --text-primary: #E6EDF3;
         --text-secondary: #8B949E;
         --accent-purple: #A855F7;
         --accent-cyan: #06B6D4;
         --accent-green: #10B981;
         --accent-orange: #F59E0B;
-        --accent-red: #EF4444;
         --gradient-primary: linear-gradient(135deg, #A855F7 0%, #06B6D4 100%);
-        --gradient-warm: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%);
     }
 
-    /* ===== Global ===== */
-    .stApp {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
+    .stApp { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
 
-    /* ===== Glassmorphic Cards ===== */
     .glass-card {
         background: var(--bg-card);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border: 1px solid var(--border-glass);
         border-radius: 16px;
-        padding: 24px;
-        margin: 12px 0;
+        padding: 20px;
+        margin: 8px 0;
         transition: all 0.3s ease;
     }
-
     .glass-card:hover {
         border-color: rgba(168, 85, 247, 0.3);
         box-shadow: 0 8px 32px rgba(168, 85, 247, 0.1);
     }
 
-    /* ===== Gradient Title ===== */
     .gradient-title {
         background: var(--gradient-primary);
         -webkit-background-clip: text;
@@ -99,126 +90,10 @@ def inject_custom_css():
         font-weight: 800;
         font-size: 2.2rem;
         letter-spacing: -0.02em;
-        margin-bottom: 0;
     }
 
-    .subtitle {
-        color: var(--text-secondary);
-        font-size: 0.95rem;
-        font-weight: 400;
-        margin-top: 4px;
-    }
+    .subtitle { color: var(--text-secondary); font-size: 0.95rem; margin-top: 4px; }
 
-    /* ===== Status Badges ===== */
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-    }
-
-    .status-ready {
-        background: rgba(16, 185, 129, 0.15);
-        color: #10B981;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    .status-mock {
-        background: rgba(245, 158, 11, 0.15);
-        color: #F59E0B;
-        border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-
-    .status-error {
-        background: rgba(239, 68, 68, 0.15);
-        color: #EF4444;
-        border: 1px solid rgba(239, 68, 68, 0.3);
-    }
-
-    /* ===== CMI Gauge Bar ===== */
-    .cmi-bar-container {
-        width: 100%;
-        height: 24px;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 12px;
-        overflow: hidden;
-        margin: 8px 0;
-        border: 1px solid var(--border-glass);
-    }
-
-    .cmi-bar-fill {
-        height: 100%;
-        border-radius: 12px;
-        transition: width 0.5s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.72rem;
-        font-weight: 700;
-        color: white;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-    }
-
-    /* ===== Token Language Chips ===== */
-    .token-chip {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 6px;
-        font-size: 0.82rem;
-        font-weight: 500;
-        margin: 2px 3px;
-        transition: transform 0.2s;
-    }
-
-    .token-chip:hover {
-        transform: translateY(-2px);
-    }
-
-    .token-vi {
-        background: rgba(59, 130, 246, 0.2);
-        color: #60A5FA;
-        border: 1px solid rgba(59, 130, 246, 0.3);
-    }
-
-    .token-en {
-        background: rgba(249, 115, 22, 0.2);
-        color: #FB923C;
-        border: 1px solid rgba(249, 115, 22, 0.3);
-    }
-
-    .token-other {
-        background: rgba(156, 163, 175, 0.15);
-        color: #9CA3AF;
-        border: 1px solid rgba(156, 163, 175, 0.2);
-    }
-
-    /* ===== Result Cards ===== */
-    .result-card {
-        background: rgba(17, 25, 40, 0.6);
-        border: 1px solid var(--border-glass);
-        border-left: 3px solid var(--accent-purple);
-        border-radius: 8px;
-        padding: 16px;
-        margin: 8px 0;
-    }
-
-    .result-card .score {
-        color: var(--accent-cyan);
-        font-weight: 700;
-        font-size: 0.85rem;
-    }
-
-    .result-card .citation {
-        color: var(--text-secondary);
-        font-style: italic;
-        font-size: 0.82rem;
-    }
-
-    /* ===== Animated Divider ===== */
     .gradient-divider {
         height: 2px;
         background: var(--gradient-primary);
@@ -228,90 +103,79 @@ def inject_custom_css():
         opacity: 0.6;
     }
 
-    /* ===== Sidebar Styling ===== */
+    .status-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 12px; border-radius: 20px;
+        font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em;
+    }
+    .status-ready  { background: rgba(16,185,129,.15); color:#10B981; border:1px solid rgba(16,185,129,.3); }
+    .status-mock   { background: rgba(245,158,11,.15);  color:#F59E0B; border:1px solid rgba(245,158,11,.3); }
+    .status-error  { background: rgba(239,68,68,.15);   color:#EF4444; border:1px solid rgba(239,68,68,.3); }
+
+    .result-card {
+        background: rgba(17,25,40,.6);
+        border: 1px solid var(--border-glass);
+        border-left: 3px solid var(--accent-purple);
+        border-radius: 8px; padding: 16px; margin: 8px 0;
+    }
+    .result-card .score  { color: var(--accent-cyan); font-weight:700; font-size:.85rem; }
+    .result-card .citation { color: var(--text-secondary); font-style:italic; font-size:.82rem; }
+
+    .token-chip {
+        display:inline-block; padding:3px 10px; border-radius:6px;
+        font-size:.82rem; font-weight:500; margin:2px 3px; transition:transform .2s;
+    }
+    .token-chip:hover { transform: translateY(-2px); }
+    .token-vi    { background:rgba(59,130,246,.2);  color:#60A5FA; border:1px solid rgba(59,130,246,.3); }
+    .token-en    { background:rgba(249,115,22,.2);  color:#FB923C; border:1px solid rgba(249,115,22,.3); }
+    .token-other { background:rgba(156,163,175,.15);color:#9CA3AF; border:1px solid rgba(156,163,175,.2);}
+
+    .cmi-bar-container {
+        width:100%; height:24px; background:rgba(255,255,255,.05);
+        border-radius:12px; overflow:hidden; margin:8px 0; border:1px solid var(--border-glass);
+    }
+    .cmi-bar-fill {
+        height:100%; border-radius:12px; transition:width .5s ease;
+        display:flex; align-items:center; justify-content:center;
+        font-size:.72rem; font-weight:700; color:white;
+    }
+
     section[data-testid="stSidebar"] {
-        background: rgba(14, 17, 23, 0.95);
+        background: rgba(14,17,23,.95);
         border-right: 1px solid var(--border-glass);
     }
-
-    /* ===== Tab Styling ===== */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        padding: 8px 16px;
-    }
-
-    /* ===== Transcript Segment Table ===== */
-    .segment-time {
-        color: var(--accent-cyan);
-        font-weight: 600;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.82rem;
-    }
-
-    /* ===== Pipeline Step Indicator ===== */
-    .pipeline-step {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 16px;
-        border-radius: 8px;
-        margin: 4px 0;
-    }
-
-    .pipeline-step.active {
-        background: rgba(168, 85, 247, 0.1);
-        border: 1px solid rgba(168, 85, 247, 0.3);
-    }
-
-    .pipeline-step.done {
-        background: rgba(16, 185, 129, 0.1);
-        border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    .pipeline-step.waiting {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid var(--border-glass);
-        opacity: 0.5;
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; }
     </style>
     """, unsafe_allow_html=True)
 
 
-# ----------------------------------------------------------------------
-# Global Resource Loaders (Cached globally)
-# ----------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Cached Resource Loaders
+# ──────────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
-def load_asr_module():
-    """Instantiates and caches the speech recognition module."""
+def _load_asr():
     from edumind.config import get_settings
     from edumind.modules.speech_processor import CodeSwitchedASR
-    settings = get_settings()
-    return CodeSwitchedASR(model_name=settings.WHISPER_MODEL)
+    return CodeSwitchedASR(model_name=get_settings().WHISPER_MODEL)
 
 
 @st.cache_resource(show_spinner=False)
-def load_translator_module():
-    """Instantiates and caches the bilingual translation module."""
+def _load_translator():
     from edumind.modules.vietmix_translator import VietMixTranslator
     return VietMixTranslator()
 
 
 @st.cache_resource(show_spinner=False)
-def load_rag_module():
-    """Instantiates and caches the layout-aware RAG search module."""
+def _load_rag():
     from edumind.modules.rag_engine import MultimodalRAG
     return MultimodalRAG()
 
 
-# ----------------------------------------------------------------------
-# Sidebar Layout Component
-# ----------------------------------------------------------------------
-def render_sidebar():
-    """Renders Sidebar containing Logo, System status, and Configuration info."""
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar
+# ──────────────────────────────────────────────────────────────────────────────
+def _render_sidebar() -> None:
     with st.sidebar:
         st.markdown(
             '<p class="gradient-title">🧠 EduMIND</p>'
@@ -321,243 +185,234 @@ def render_sidebar():
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### ⚡ System Status")
-
         from edumind.config import get_settings
         settings = get_settings()
 
-        # Device status
-        device_str = str(settings.DEVICE)
-        if "cuda" in device_str:
-            st.markdown(
-                '<span class="status-badge status-ready">🟢 GPU CUDA</span>',
-                unsafe_allow_html=True,
-            )
-        elif "mps" in device_str:
-            st.markdown(
-                '<span class="status-badge status-ready">🟢 Apple MPS</span>',
-                unsafe_allow_html=True,
-            )
+        # Device
+        device = str(settings.DEVICE)
+        if "cuda" in device:
+            _badge("🟢 GPU CUDA", "status-ready")
+        elif "mps" in device:
+            _badge("🟢 Apple MPS", "status-ready")
         else:
-            st.markdown(
-                '<span class="status-badge status-mock">🟡 CPU Mode</span>',
-                unsafe_allow_html=True,
-            )
+            _badge("🟡 CPU Mode", "status-mock")
 
-        # ASR status
+        # ASR
         try:
-            asr = load_asr_module()
-            if asr.is_ready:
-                st.markdown(
-                    '<span class="status-badge status-ready">🟢 ASR Ready</span>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    '<span class="status-badge status-mock">🟡 ASR Mock</span>',
-                    unsafe_allow_html=True,
-                )
+            asr = _load_asr()
+            _badge("🟢 ASR Ready" if asr.is_ready else "🟡 ASR Mock",
+                   "status-ready" if asr.is_ready else "status-mock")
         except Exception:
-            st.markdown(
-                '<span class="status-badge status-error">🔴 ASR Error</span>',
-                unsafe_allow_html=True,
-            )
+            _badge("🔴 ASR Error", "status-error")
 
-        # Translation status
+        # Translator
         try:
-            translator = load_translator_module()
-            mode_label = "Model" if translator.is_model_loaded else "Rule-Based"
-            badge_class = "status-ready" if translator.is_model_loaded else "status-mock"
-            emoji = "🟢" if translator.is_model_loaded else "🟡"
-            st.markdown(
-                f'<span class="status-badge {badge_class}">{emoji} Translator: {mode_label}</span>',
-                unsafe_allow_html=True,
-            )
+            t = _load_translator()
+            label = "Model" if t.is_model_loaded else "Rule-Based"
+            cls = "status-ready" if t.is_model_loaded else "status-mock"
+            emoji = "🟢" if t.is_model_loaded else "🟡"
+            _badge(f"{emoji} Translator: {label}", cls)
         except Exception:
-            st.markdown(
-                '<span class="status-badge status-error">🔴 Translator Error</span>',
-                unsafe_allow_html=True,
-            )
+            _badge("🔴 Translator Error", "status-error")
 
-        # RAG status
+        # RAG
         try:
-            rag = load_rag_module()
+            rag = _load_rag()
+            info = rag.get_collection_info()
+            pts = info.get("points_count", 0) or 0
             if rag.is_ready:
-                info = rag.get_collection_info()
-                count = info.get("points_count", 0) or 0
-                st.markdown(
-                    f'<span class="status-badge status-ready">🟢 RAG: {count} chunks</span>',
-                    unsafe_allow_html=True,
-                )
+                _badge(f"🟢 RAG: {pts} chunks", "status-ready")
             else:
-                st.markdown(
-                    '<span class="status-badge status-error">🔴 RAG Not Ready</span>',
-                    unsafe_allow_html=True,
-                )
+                _badge("🔴 RAG Not Ready", "status-error")
         except Exception:
-            st.markdown(
-                '<span class="status-badge status-error">🔴 RAG Error</span>',
-                unsafe_allow_html=True,
-            )
+            _badge("🔴 RAG Error", "status-error")
 
-        # Graph DB status
+        # Graph
         try:
             from edumind.core.container import get_graph_store
             gs = get_graph_store()
+            g_info = gs.graph_info()
+            mode = g_info.get("storage_mode", "Mock")
             if gs.is_ready:
-                g_info = gs.graph_info()
-                n_count = g_info.get("nodes_count", 0)
-                e_count = g_info.get("edges_count", 0)
-                st.markdown(
-                    f'<span class="status-badge status-ready">🟢 Graph: {n_count} nodes, {e_count} edges</span>',
-                    unsafe_allow_html=True,
-                )
+                n = g_info.get("nodes_count", 0)
+                e = g_info.get("edges_count", 0)
+                _badge(f"🟢 Graph: {n}n {e}e", "status-ready")
             else:
-                st.markdown(
-                    '<span class="status-badge status-mock">🟡 Graph Mock (RAM)</span>',
-                    unsafe_allow_html=True,
-                )
+                _badge(f"🟡 Graph Mock (RAM)", "status-mock")
         except Exception:
-            st.markdown(
-                '<span class="status-badge status-error">🔴 Graph Error</span>',
-                unsafe_allow_html=True,
-            )
+            _badge("🔴 Graph Error", "status-error")
 
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
         st.markdown("### 🔧 Configuration")
-        config_summary = settings.summary()
-        for key, val in config_summary.items():
-            display_key = key.replace("_", " ").title()
-            st.text(f"{display_key}: {val}")
+        for k, v in settings.summary().items():
+            st.text(f"{k.replace('_', ' ').title()}: {v}")
 
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
-        st.markdown("### ℹ️ About")
+        st.markdown("### 🔌 API")
         st.markdown(
-            "**EduMIND v2.0.0** — Production-Ready Enterprise Standard\n\n"
-            "An integrated multimodal lecture note-taking, translation, "
-            "and question-answering assistant.\n\n"
+            "FastAPI server (when running):\n\n"
+            "- Swagger: [localhost:8000/docs](http://localhost:8000/docs)\n"
+            "- Health: [localhost:8000/health](http://localhost:8000/health)\n\n"
+            "Start with `make api`"
+        )
+
+        st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+        st.markdown(
+            "**EduMIND v2.0.0**\n\n"
             "🏫 *HCMUS Underdogs Team*"
         )
 
 
-# ----------------------------------------------------------------------
-# Tab 1: 🎙️ Bilingual Note-Taker (ASR Interface)
-# ----------------------------------------------------------------------
-def render_tab_asr():
-    """Renders the Bilingual Note-Taker tab interface."""
-    st.markdown("## 🎙️ Bilingual Note-Taker")
-    st.markdown(
-        "Upload a lecture audio file to auto-transcribe speech and correct "
-        " Vietnamese teencode, tech slang, and abbreviations."
-    )
+def _badge(label: str, css_class: str) -> None:
+    st.markdown(f'<span class="status-badge {css_class}">{label}</span>', unsafe_allow_html=True)
+
+
+def _divider() -> None:
     st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
 
-    asr = load_asr_module()
 
-    audio_file = st.file_uploader(
-        "📁 Upload lecture audio",
-        type=["wav", "mp3", "flac", "m4a", "ogg"],
-        key="asr_upload",
-        help="Supported formats: WAV, MP3, FLAC, M4A, OGG",
-    )
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared UI Components (extracted to avoid duplication)
+# ──────────────────────────────────────────────────────────────────────────────
+def _render_result_cards(results) -> None:
+    """Renders a list of RetrievedChunk objects as styled result cards."""
+    for i, res in enumerate(results, start=1):
+        page = res.metadata.get("page_number", "?")
+        source = res.metadata.get("source_file", "Unknown")
+        section = res.metadata.get("section_header", "")
+        source_type = res.metadata.get("source_type", "")
 
-    col_btn, col_mock = st.columns([1, 1])
+        type_label = f"{source_type} — " if source_type else ""
+        section_label = f" | §{section}" if section and section != "Untitled Section" else ""
 
-    with col_btn:
-        transcribe_btn = st.button(
-            "🎤 Transcribe Audio",
-            key="btn_transcribe",
-            use_container_width=True,
-            type="primary",
-        )
-
-    with col_mock:
-        mock_btn = st.button(
-            "🎭 Load Demo (Mock Data)",
-            key="btn_mock_asr",
-            use_container_width=True,
-        )
-
-    if transcribe_btn and audio_file is not None:
-        with st.spinner("Transcribing audio file..."):
-            with tempfile.NamedTemporaryFile(
-                suffix=Path(audio_file.name).suffix, delete=False
-            ) as tmp:
-                tmp.write(audio_file.read())
-                tmp_path = tmp.name
-
-            result = asr.transcribe(tmp_path)
-            _display_transcript_result(asr, result)
-
-    elif mock_btn:
-        with st.spinner("Generating simulated lecture transcription..."):
-            result = asr._mock_transcribe()
-            _display_transcript_result(asr, result)
-
-    elif transcribe_btn and audio_file is None:
-        st.warning("⚠️ Please upload an audio file first!")
-
-
-def _display_transcript_result(asr, result):
-    """Displays transcription results side-by-side with teencode corrections."""
-    if result.is_mock:
-        st.info("🎭 Showing simulated mock data — Whisper model bypassed.")
-
-    raw_text = result.text
-    corrected_text = asr.post_process(raw_text)
-
-    col_raw, col_corrected = st.columns(2)
-
-    with col_raw:
-        st.markdown("#### 📝 Raw Transcription")
-        st.markdown(f'<div class="glass-card">{raw_text}</div>', unsafe_allow_html=True)
-
-    with col_corrected:
-        st.markdown("#### ✅ Corrected Transcription")
         st.markdown(
-            f'<div class="glass-card" style="border-left: 3px solid var(--accent-green);">'
-            f'{corrected_text}</div>',
+            f'<div class="result-card">'
+            f'<span class="score">#{i} {type_label}Relevance: {res.score:.4f}</span><br>'
+            f'{res.text[:400]}{"..." if len(res.text) > 400 else ""}<br>'
+            f'<span class="citation">📄 Page {page} | {source}{section_label}</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-    changes = asr.get_corrections(raw_text, corrected_text)
+
+def _render_cmi_gauge(score: float) -> None:
+    """Renders a colour-coded CMI gauge bar."""
+    if score < 0.2:
+        colour = "linear-gradient(90deg, #10B981, #34D399)"
+    elif score < 0.5:
+        colour = "linear-gradient(90deg, #F59E0B, #FBBF24)"
+    else:
+        colour = "linear-gradient(90deg, #EF4444, #F87171)"
+
+    fill = max(score * 100, 5)
+    st.markdown(
+        f'<div class="cmi-bar-container">'
+        f'<div class="cmi-bar-fill" style="width:{fill}%;background:{colour};">'
+        f'{score:.2f}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 1: 🎙️ Speech-to-Text
+# ──────────────────────────────────────────────────────────────────────────────
+def _tab_asr() -> None:
+    st.markdown("## 🎙️ Speech-to-Text")
+    st.markdown(
+        "**Input:** Upload a lecture audio file (WAV / MP3 / FLAC / M4A / OGG).  \n"
+        "**Output:** Full transcript, teencode-corrected text, timestamped segments."
+    )
+    _divider()
+
+    asr = _load_asr()
+
+    audio_file = st.file_uploader(
+        "📁 Lecture audio file",
+        type=["wav", "mp3", "flac", "m4a", "ogg"],
+        key="asr_upload",
+        help="Supported: WAV, MP3, FLAC, M4A, OGG",
+    )
+
+    col_real, col_mock = st.columns(2)
+    with col_real:
+        run_btn = st.button(
+            "🎤 Transcribe Audio", key="btn_transcribe",
+            use_container_width=True, type="primary",
+            disabled=audio_file is None,
+        )
+    with col_mock:
+        mock_btn = st.button(
+            "🎭 Demo (Mock Data)", key="btn_mock_asr",
+            use_container_width=True,
+        )
+
+    if run_btn and audio_file:
+        with st.spinner("Transcribing with Whisper..."):
+            with tempfile.NamedTemporaryFile(suffix=Path(audio_file.name).suffix, delete=False) as tmp:
+                tmp.write(audio_file.read())
+                tmp_path = tmp.name
+            result = asr.transcribe(tmp_path)
+            Path(tmp_path).unlink(missing_ok=True)
+        _display_transcript(asr, result)
+
+    elif mock_btn:
+        with st.spinner("Generating mock transcript..."):
+            result = asr._mock_transcribe()
+        _display_transcript(asr, result)
+
+    elif run_btn and not audio_file:
+        st.warning("⚠️ Please upload an audio file first.")
+
+
+def _display_transcript(asr, result) -> None:
+    if result.is_mock:
+        st.info("🎭 Showing simulated mock data — Whisper model bypassed.")
+
+    raw = result.text
+    corrected = asr.post_process(raw)
+
+    col_raw, col_fixed = st.columns(2)
+    with col_raw:
+        st.markdown("#### 📝 Raw Transcript")
+        st.markdown(f'<div class="glass-card">{raw}</div>', unsafe_allow_html=True)
+    with col_fixed:
+        st.markdown("#### ✅ Corrected Transcript")
+        st.markdown(
+            f'<div class="glass-card" style="border-left:3px solid var(--accent-green);">'
+            f'{corrected}</div>',
+            unsafe_allow_html=True,
+        )
+
+    changes = asr.get_corrections(raw, corrected)
     if changes:
-        with st.expander(f"🔍 Correction Details ({len(changes)} corrections made)", expanded=False):
+        with st.expander(f"🔍 {len(changes)} corrections applied", expanded=False):
             for ch in changes:
-                st.markdown(
-                    f"  `{ch['original']}` → **{ch['corrected']}**"
-                )
+                st.markdown(f"  `{ch['original']}` → **{ch['corrected']}**")
 
     if result.segments:
         st.markdown("#### ⏱️ Timestamps")
         seg_data = []
         for seg in result.segments:
-            start_fmt = f"{int(seg.start // 60):02d}:{seg.start % 60:05.2f}"
-            end_fmt = f"{int(seg.end // 60):02d}:{seg.end % 60:05.2f}"
-            seg_data.append({
-                "Start": start_fmt,
-                "End": end_fmt,
-                "Segment Text": seg.text,
-            })
+            s = f"{int(seg.start // 60):02d}:{seg.start % 60:05.2f}"
+            e = f"{int(seg.end // 60):02d}:{seg.end % 60:05.2f}"
+            seg_data.append({"Start": s, "End": e, "Text": seg.text})
         st.dataframe(seg_data, use_container_width=True, hide_index=True)
 
 
-# ----------------------------------------------------------------------
-# Tab 2: 🔄 VietMix Translation (Machine Translation Interface)
-# ----------------------------------------------------------------------
-def render_tab_translation():
-    """Renders the VietMix Translation tab interface."""
-    st.markdown("## 🔄 VietMix Translation")
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 2: 🔄 VietMix Translator
+# ──────────────────────────────────────────────────────────────────────────────
+def _tab_translation() -> None:
+    st.markdown("## 🔄 VietMix Translator")
     st.markdown(
-        "Enter a code-mixed Vietnamese-English sentence to calculate the Code-Mixing Index (CMI) "
-        "and translate it into clean English or clean Vietnamese."
+        "**Input:** Code-mixed Vietnamese-English sentence.  \n"
+        "**Output:** CMI score, per-token language labels, English translation, Vietnamese translation."
     )
-    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+    _divider()
 
-    translator = load_translator_module()
+    translator = _load_translator()
 
-    example_sentences = [
+    EXAMPLES = [
         "Hôm nay mình sẽ discuss về loss function trong deep learning model",
         "Các bạn cần submit bài trước deadline nhé, không là bị trừ điểm",
         "Bây giờ mình bắt đầu explain về attention mechanism trong transformer",
@@ -565,515 +420,301 @@ def render_tab_translation():
         "Mọi người nhớ review lại backpropagation và gradient descent",
     ]
 
-    st.markdown("**💡 Select Example Sentence:**")
-    selected_example = st.selectbox(
-        "Select an example sentence or type below",
-        options=["(Custom Input)"] + example_sentences,
-        key="translation_example",
-        label_visibility="collapsed",
+    selected = st.selectbox(
+        "💡 Quick examples:",
+        ["(Custom input)"] + EXAMPLES,
+        key="trans_example",
     )
-
-    default_text = "" if selected_example == "(Custom Input)" else selected_example
+    default = "" if selected == "(Custom input)" else selected
     input_text = st.text_area(
-        "✏️ Input Code-Mixed Sentence",
-        value=default_text,
+        "✏️ Input sentence",
+        value=default,
         height=100,
-        key="translation_input",
+        key="trans_input",
         placeholder="Type here, e.g., Hôm nay mình sẽ discuss về loss function...",
     )
 
-    if input_text.strip():
-        cmi_result = translator.calculate_cmi(input_text)
+    if not input_text.strip():
+        st.caption("👆 Enter a sentence above to see analysis and translation.")
+        return
 
-        st.markdown("### 📊 Code-Mixing Index (CMI)")
+    # ── CMI Analysis ─────────────────────────────────────────────────────────
+    cmi = translator.calculate_cmi(input_text)
 
-        # Determine color gradient for CMI Gauge
-        if cmi_result.score < 0.2:
-            bar_color = "linear-gradient(90deg, #10B981, #34D399)"
-        elif cmi_result.score < 0.5:
-            bar_color = "linear-gradient(90deg, #F59E0B, #FBBF24)"
-        else:
-            bar_color = "linear-gradient(90deg, #EF4444, #F87171)"
+    st.markdown("### 📊 Code-Mixing Index (CMI)")
+    _render_cmi_gauge(cmi.score)
 
-        fill_width = max(cmi_result.score * 100, 5)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("CMI Score", f"{cmi.score:.4f}")
+    c2.metric("🇻🇳 Vietnamese", cmi.vi_count)
+    c3.metric("🇬🇧 English", cmi.en_count)
+    c4.metric("Dominant", cmi.dominant_language.upper())
+
+    # ── Token Labels ─────────────────────────────────────────────────────────
+    st.markdown("### 🏷️ Token Classification")
+    chips = ""
+    for tl in cmi.token_labels:
+        emoji = "🇻🇳" if tl.language == "vi" else ("🇬🇧" if tl.language == "en" else "⚪")
+        chips += f'<span class="token-chip token-{tl.language}">{emoji} {tl.token}</span>'
+    st.markdown(chips, unsafe_allow_html=True)
+
+    _divider()
+
+    # ── Translation Outputs ───────────────────────────────────────────────────
+    st.markdown("### 🌐 Translation")
+    col_en, col_vi = st.columns(2)
+
+    with col_en:
+        st.markdown("#### 🇬🇧 → English")
+        en_result = translator.translate_to_english(input_text)
         st.markdown(
-            f'<div class="cmi-bar-container">'
-            f'<div class="cmi-bar-fill" style="width: {fill_width}%; background: {bar_color};">'
-            f'{cmi_result.score:.2f}'
-            f'</div></div>',
+            f'<div class="glass-card" style="border-left:3px solid var(--accent-orange);">'
+            f'{en_result}</div>',
             unsafe_allow_html=True,
         )
 
-        col_cmi1, col_cmi2, col_cmi3, col_cmi4 = st.columns(4)
-        col_cmi1.metric("CMI Score", f"{cmi_result.score:.4f}")
-        col_cmi2.metric("🇻🇳 Vietnamese Tokens", cmi_result.vi_count)
-        col_cmi3.metric("🇬🇧 English Tokens", cmi_result.en_count)
-        col_cmi4.metric("Dominant Language", cmi_result.dominant_language.upper())
-
-        st.markdown("### 🏷️ Token Language Classification")
-        chips_html = ""
-        for tl in cmi_result.token_labels:
-            css_class = f"token-{tl.language}"
-            lang_emoji = "🇻🇳" if tl.language == "vi" else ("🇬🇧" if tl.language == "en" else "⚪")
-            chips_html += (
-                f'<span class="token-chip {css_class}">'
-                f'{lang_emoji} {tl.token}</span>'
-            )
-        st.markdown(chips_html, unsafe_allow_html=True)
-
-        st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
-        st.markdown("### 🌐 Translation Outputs")
-        col_en, col_vi = st.columns(2)
-
-        with col_en:
-            st.markdown("#### 🇬🇧 → Standard English")
-            en_result = translator.translate_to_english(input_text)
-            st.markdown(
-                f'<div class="glass-card" style="border-left: 3px solid var(--accent-orange);">'
-                f'{en_result}</div>',
-                unsafe_allow_html=True,
-            )
-
-        with col_vi:
-            st.markdown("#### 🇻🇳 → Standard Vietnamese")
-            vi_result = translator.translate_to_vietnamese(input_text)
-            st.markdown(
-                f'<div class="glass-card" style="border-left: 3px solid #3B82F6;">'
-                f'{vi_result}</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.caption(f"🔧 Translation execution mode: **{translator.mode}**")
-
-
-# ----------------------------------------------------------------------
-# Tab 3: 📚 Anti-Forget RAG (Document Search & QA Interface)
-# ----------------------------------------------------------------------
-def render_tab_rag():
-    """Renders the Anti-Forget RAG tab interface."""
-    st.markdown("## 📚 Anti-Forget RAG")
-    st.markdown(
-        "Upload PDF documents or lecture slides, store them into the Qdrant vector database, "
-        "and retrieve knowledge segments with detailed source citations."
-    )
-    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
-    rag = load_rag_module()
-
-    st.markdown("### 📄 Document Upload")
-
-    uploaded_files = st.file_uploader(
-        "Select PDF Slides / Lecture Materials",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key="rag_upload",
-    )
-
-    col_ingest, col_clear = st.columns([3, 1])
-
-    with col_ingest:
-        ingest_btn = st.button(
-            "📥 Index Documents",
-            key="btn_ingest",
-            use_container_width=True,
-            type="primary",
-            disabled=not uploaded_files,
+    with col_vi:
+        st.markdown("#### 🇻🇳 → Vietnamese")
+        vi_result = translator.translate_to_vietnamese(input_text)
+        st.markdown(
+            f'<div class="glass-card" style="border-left:3px solid #3B82F6;">'
+            f'{vi_result}</div>',
+            unsafe_allow_html=True,
         )
 
-    with col_clear:
-        clear_btn = st.button(
-            "🗑️ Clear Vector Index",
-            key="btn_clear_rag",
-            use_container_width=True,
+    st.caption(f"🔧 Translation mode: **{translator.mode}**")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 3: 📚 Knowledge Base  (§A Document Mgmt  +  §B Semantic Q&A)
+# ──────────────────────────────────────────────────────────────────────────────
+def _tab_knowledge_base() -> None:
+    st.markdown("## 📚 Knowledge Base")
+    st.markdown(
+        "Manage lecture documents and search your indexed knowledge base.\n\n"
+        "- **§A Document Management** — Upload PDFs, ingest transcripts, monitor index\n"
+        "- **§B Semantic Q&A** — Ask questions; get cited answers from your slides"
+    )
+    _divider()
+
+    rag = _load_rag()
+
+    # ── §A: Document Management ───────────────────────────────────────────────
+    with st.expander("§A — Document Management", expanded=True):
+        st.markdown(
+            "**Input:** One or more PDF files.  \n"
+            "**Output:** Number of chunks indexed into Qdrant vector store."
         )
 
-    if clear_btn:
-        if rag.clear_index():
-            st.success("✅ Successfully wiped Qdrant collections!")
-        else:
-            st.error("❌ Failed to clear database collections.")
-
-    if ingest_btn and uploaded_files:
-        total_chunks = 0
-        progress_bar = st.progress(0, text="Preprocessing and indexing documents...")
-
-        for i, uploaded_file in enumerate(uploaded_files):
-            progress_bar.progress(
-                (i) / len(uploaded_files),
-                text=f"📄 Ingesting: {uploaded_file.name}...",
-            )
-
-            # Save file to data/raw directory
-            dest_path = get_raw_dir() / uploaded_file.name
-            with open(dest_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-
-            chunks = rag.ingest_pdf(dest_path)
-
-            for chunk in chunks:
-                chunk.metadata["source_file"] = uploaded_file.name
-
-            stored = rag.embed_and_store(chunks)
-            total_chunks += stored
-
-            # Explicit memory cleanup to release model allocations from RAM/MPS
-            import gc
-            gc.collect()
-            try:
-                import torch
-                if torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
-            except Exception:
-                pass
-
-        progress_bar.progress(1.0, text="✅ Completed successfully!")
-        st.success(f"✅ Indexed {total_chunks} text chunks from {len(uploaded_files)} files!")
-
-    info = rag.get_collection_info()
-    if info.get("status") == "ready":
-        points = info.get("points_count", 0) or 0
-        st.info(f"📦 **Qdrant Index:** `{info.get('collection_name')}` — {points} chunks indexed")
-
-    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
-    st.markdown("### 🔍 Intelligent Semantic QA")
-
-    query_text = st.text_input(
-        "Enter question",
-        key="rag_query",
-        placeholder="Type here, e.g., How does the attention mechanism focus on relevant words?",
-    )
-
-    top_k = st.slider("Result Count (top-k)", min_value=1, max_value=20, value=5, key="rag_topk")
-
-    search_btn = st.button(
-        "🔍 Search Knowledge Base",
-        key="btn_search",
-        use_container_width=True,
-        type="primary",
-    )
-
-    if search_btn and query_text.strip():
-        with st.spinner("Searching semantic vectors..."):
-            results = rag.query(query_text, top_k=top_k)
-
-        if results:
-            answer = rag.generate_answer(query_text, results)
-            st.markdown("#### 📋 Synthesized Answer")
-            st.markdown(
-                f'<div class="glass-card" style="border-left: 3px solid var(--accent-green);">'
-                f'{answer}</div>',
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("#### 📄 Matched Source Chunks")
-            for i, res in enumerate(results, start=1):
-                page = res.metadata.get("page_number", "?")
-                source = res.metadata.get("source_file", "Unknown")
-                section = res.metadata.get("section_header", "")
-
-                st.markdown(
-                    f'<div class="result-card">'
-                    f'<span class="score">#{i} — Relevance Score: {res.score:.4f}</span><br>'
-                    f'{res.text[:400]}{"..." if len(res.text) > 400 else ""}<br>'
-                    f'<span class="citation">📄 Page {page} | {source}'
-                    f'{" | §" + section if section and section != "Untitled Section" else ""}'
-                    f'</span></div>',
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.warning("⚠️ No relevant matches found. Upload slides and index them first.")
-
-    elif search_btn:
-        st.warning("⚠️ Please enter a question first!")
-
-
-# ----------------------------------------------------------------------
-# Tab 4: 🧠 EduMIND ALL-IN-ONE Pipeline (Unified Workflow)
-# ----------------------------------------------------------------------
-def render_tab_pipeline():
-    """Renders the end-to-end integrated Pipeline tab interface."""
-    st.markdown("## 🧠 EduMIND ALL-IN-ONE Pipeline")
-    st.markdown(
-        "Perform end-to-end processing: Upload a lecture PDF slide and an audio recording simultaneously. "
-        "Run ASR transcription, clean the transcripts, ingest slide pages, and index both into a single database."
-    )
-    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-
-    asr = load_asr_module()
-    rag = load_rag_module()
-
-    col_pdf, col_audio = st.columns(2)
-
-    with col_pdf:
-        st.markdown("#### 📄 Slide PDF File")
-        pdf_file = st.file_uploader(
-            "Upload lecture slides",
+        uploaded_files = st.file_uploader(
+            "📄 Upload PDF lecture slides / materials",
             type=["pdf"],
-            key="pipeline_pdf",
+            accept_multiple_files=True,
+            key="rag_upload",
         )
 
-    with col_audio:
-        st.markdown("#### 🎙️ Lecture Audio File")
-        audio_file = st.file_uploader(
-            "Upload lecture audio recording",
-            type=["wav", "mp3", "flac", "m4a"],
-            key="pipeline_audio",
-        )
-
-    col_run, col_mock_run = st.columns(2)
-
-    with col_run:
-        run_btn = st.button(
-            "🚀 Run Full Pipeline",
-            key="btn_run_pipeline",
-            use_container_width=True,
-            type="primary",
-            disabled=not (pdf_file or audio_file),
-        )
-
-    with col_mock_run:
-        mock_pipeline_btn = st.button(
-            "🎭 Run Demo Pipeline (Mock Data)",
-            key="btn_mock_pipeline",
-            use_container_width=True,
-        )
-
-    if run_btn or mock_pipeline_btn:
-        progress_bar = st.progress(0, text="Launching pipeline...")
-
-        # Step 1: Speech-to-Text Transcription
-        progress_bar.progress(0.1, text="🎤 Step 1/5: Transcribing lecture recording...")
-        if mock_pipeline_btn or audio_file is None:
-            transcript_result = asr._mock_transcribe()
+        # Collection status strip
+        info = rag.get_collection_info()
+        if info.get("status") == "ready":
+            pts = info.get("points_count", 0) or 0
+            st.info(f"📦 **Qdrant:** `{info.get('collection_name')}` — **{pts}** chunks indexed")
         else:
-            with tempfile.NamedTemporaryFile(
-                suffix=Path(audio_file.name).suffix, delete=False
-            ) as tmp:
-                tmp.write(audio_file.read())
-                tmp_path = tmp.name
-            transcript_result = asr.transcribe(tmp_path)
+            st.warning("⚠️ Vector store not ready.")
 
-        # Step 2: Audio Post-processing & Teencode correction
-        progress_bar.progress(0.3, text="✏️ Step 2/5: Normalizing text and correcting abbreviations...")
-        corrected_transcript = asr.post_process(transcript_result.text)
-
-        # Step 3: Parse PDF slides
-        progress_bar.progress(0.5, text="📄 Step 3/5: Parsing PDF slide pages layout...")
-        all_chunks = []
-
-        if pdf_file is not None:
-            # Save to raw
-            dest_pdf = get_raw_dir() / pdf_file.name
-            with open(dest_pdf, "wb") as f:
-                f.write(pdf_file.getbuffer())
-
-            pdf_chunks = rag.ingest_pdf(dest_pdf)
-            for chunk in pdf_chunks:
-                chunk.metadata["source_type"] = "📄 Slide"
-                chunk.metadata["source_file"] = pdf_file.name
-            all_chunks.extend(pdf_chunks)
-
-        # Segment and ingest transcripts
-        transcript_chunks = rag.ingest_text(
-            corrected_transcript,
-            source_name="🎙️ Transcript",
-            metadata_extra={"source_type": "🎙️ Transcript"},
-        )
-        all_chunks.extend(transcript_chunks)
-
-        # Step 4: Text Vectorization & Qdrant upsertion
-        progress_bar.progress(0.7, text="📐 Step 4/5: Generating embeddings and indexing...")
-        stored_count = rag.embed_and_store(all_chunks)
-
-        # Step 5: Completed
-        progress_bar.progress(1.0, text="✅ Pipeline complete!")
-
-        st.success(
-            f"✅ E2E Pipeline complete! "
-            f"Indexed {stored_count} chunks "
-            f"({len(transcript_chunks)} from corrected transcripts + "
-            f"{len(all_chunks) - len(transcript_chunks)} from PDF pages)."
-        )
-
-        with st.expander("📝 Transcription Outputs", expanded=True):
-            col_raw, col_fixed = st.columns(2)
-            with col_raw:
-                st.markdown("**Raw Whisper Output:**")
-                st.text(transcript_result.text[:500])
-            with col_fixed:
-                st.markdown("**Corrected Post-ASR Text:**")
-                st.text(corrected_transcript[:500])
-
-        st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-        st.markdown("### 🔍 Semantic Integrated Search (Slides + Transcripts)")
-
-    # Unified query input
-    pipeline_query = st.text_input(
-        "Search indexed slides and lecture transcripts",
-        key="pipeline_query",
-        placeholder="Type here, e.g., Explain the loss function used in deep learning.",
-    )
-
-    pipeline_search_btn = st.button(
-        "🔍 Search Integrated Database",
-        key="btn_pipeline_search",
-        use_container_width=True,
-        type="primary",
-    )
-
-    if pipeline_search_btn and pipeline_query.strip():
-        with st.spinner("Retrieving integrated answers..."):
-            results = rag.query(pipeline_query, top_k=5)
-
-        if results:
-            answer = rag.generate_answer(pipeline_query, results)
-            st.markdown(
-                f'<div class="glass-card" style="border-left: 3px solid var(--accent-green);">'
-                f'{answer}</div>',
-                unsafe_allow_html=True,
+        col_ingest, col_clear = st.columns([3, 1])
+        with col_ingest:
+            ingest_btn = st.button(
+                "📥 Index Documents",
+                key="btn_ingest",
+                use_container_width=True,
+                type="primary",
+                disabled=not uploaded_files,
+            )
+        with col_clear:
+            clear_btn = st.button(
+                "🗑️ Clear Index",
+                key="btn_clear_rag",
+                use_container_width=True,
             )
 
-            for i, res in enumerate(results, start=1):
-                source_type = res.metadata.get("source_type", "📄")
-                page = res.metadata.get("page_number", "?")
-                source = res.metadata.get("source_file", "Unknown")
+        if clear_btn:
+            if rag.clear_index():
+                st.success("✅ Qdrant index cleared!")
+            else:
+                st.error("❌ Failed to clear index.")
+            st.rerun()
 
+        if ingest_btn and uploaded_files:
+            total = 0
+            bar = st.progress(0, text="Indexing documents...")
+            for i, f in enumerate(uploaded_files):
+                bar.progress(i / len(uploaded_files), text=f"📄 {f.name}...")
+                dest = get_raw_dir() / f.name
+                with open(dest, "wb") as fh:
+                    fh.write(f.getbuffer())
+                chunks = rag.ingest_pdf(dest)
+                for c in chunks:
+                    c.metadata["source_file"] = f.name
+                total += rag.embed_and_store(chunks)
+                gc.collect()
+                try:
+                    import torch
+                    if torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
+                except Exception:
+                    pass
+            bar.progress(1.0, text="✅ Done!")
+            st.success(f"✅ Indexed **{total}** chunks from **{len(uploaded_files)}** file(s).")
+            st.rerun()
+
+    _divider()
+
+    # ── §B: Semantic Q&A ──────────────────────────────────────────────────────
+    with st.expander("§B — Semantic Q&A", expanded=True):
+        st.markdown(
+            "**Input:** A natural-language question.  \n"
+            "**Output:** LLM-synthesized answer + ranked source chunks with citations."
+        )
+
+        query = st.text_input(
+            "🔍 Your question",
+            key="rag_query",
+            placeholder="e.g., How does the attention mechanism focus on relevant words?",
+        )
+        top_k = st.slider("Result count (top-k)", 1, 20, 5, key="rag_topk")
+
+        search_btn = st.button(
+            "🔍 Search Knowledge Base",
+            key="btn_search",
+            use_container_width=True,
+            type="primary",
+        )
+
+        if search_btn and not query.strip():
+            st.warning("⚠️ Please enter a question.")
+        elif search_btn:
+            with st.spinner("Searching..."):
+                results = rag.query(query, top_k=top_k)
+
+            if results:
+                answer = rag.generate_answer(query, results)
+                st.markdown("#### 📋 Synthesized Answer")
                 st.markdown(
-                    f'<div class="result-card">'
-                    f'<span class="score">#{i} {source_type} — '
-                    f'Relevance Score: {res.score:.4f}</span><br>'
-                    f'{res.text[:300]}{"..." if len(res.text) > 300 else ""}<br>'
-                    f'<span class="citation">Page {page} | {source}</span></div>',
+                    f'<div class="glass-card" style="border-left:3px solid var(--accent-green);">'
+                    f'{answer}</div>',
                     unsafe_allow_html=True,
                 )
-        else:
-            st.info("💡 No data found. Execute the pipeline first to load lecture slides and recordings.")
+                st.markdown("#### 📄 Source Chunks")
+                _render_result_cards(results)
+            else:
+                st.warning("⚠️ No results. Upload and index documents first (§A above).")
 
 
-# ----------------------------------------------------------------------
-# Main Application Entry Point
-# ----------------------------------------------------------------------
-def main():
-    """Main execution point for the Streamlit dashboard."""
-    # Ensure data dirs are created
-    ensure_data_dirs()
-    
-    inject_custom_css()
-    render_sidebar()
-
-    # Main dashboard divided into 5 tabs
-    tab_asr, tab_trans, tab_rag, tab_pipeline, tab_graph = st.tabs([
-        "🎙️ Bilingual Note-Taker",
-        "🔄 VietMix Translation",
-        "📚 Anti-Forget RAG",
-        "🧠 ALL-IN-ONE Pipeline",
-        "🕸️ Knowledge Graph",
-    ])
-
-    with tab_asr:
-        render_tab_asr()
-
-    with tab_trans:
-        render_tab_translation()
-
-    with tab_rag:
-        render_tab_rag()
-
-    with tab_pipeline:
-        render_tab_pipeline()
-
-    with tab_graph:
-        render_tab_graph()
-
-
-def render_tab_graph():
-    """Renders the Knowledge Graph exploration tab."""
-    st.markdown("## 🕸️ Knowledge Graph Explorer")
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 4: 🕸️ Knowledge Graph
+# ──────────────────────────────────────────────────────────────────────────────
+def _tab_graph() -> None:
+    st.markdown("## 🕸️ Knowledge Graph")
     st.markdown(
-        "Explore academic concepts, terms, definitions, and their semantic relationships "
-        "extracted automatically from the ingested files into the Neo4j database."
+        "**Input:** A concept name to search for.  \n"
+        "**Output:** Related concepts and their semantic relationships extracted from ingested documents."
     )
-    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+    _divider()
 
     from edumind.core.container import get_graph_store
     gs = get_graph_store()
-    
-    # Disk and stats
-    stats = get_storage_stats()
-    
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    col_s1.metric("Storage Mode", stats.get("qdrant_mode", "local").upper())
-    col_s2.metric("Raw Files Count", stats.get("raw_files_count", 0))
-    col_s3.metric("DB Disk Usage", f"{stats.get('qdrant_size_mb', 0.0) + stats.get('raw_size_mb', 0.0):.2f} MB")
-    
-    info = gs.graph_info()
-    col_s4.metric("Graph Mode", info.get("storage_mode", "Mock").replace("_", " ").title())
 
-    st.markdown("### 🔍 Query Concept Neighborhood")
-    search_concept = st.text_input(
-        "Search concept (case-sensitive, e.g., Attention, Machine Learning)",
-        key="graph_search_concept"
+    stats = get_storage_stats()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Storage Mode", stats.get("qdrant_mode", "local").upper())
+    c2.metric("Raw Files", stats.get("raw_files_count", 0))
+    c3.metric("DB Size", f"{stats.get('qdrant_size_mb', 0.0) + stats.get('raw_size_mb', 0.0):.2f} MB")
+    info = gs.graph_info()
+    c4.metric("Graph Mode", info.get("storage_mode", "Mock").replace("_", " ").title())
+
+    _divider()
+    st.markdown("### 🔍 Concept Neighborhood Search")
+    concept = st.text_input(
+        "Concept name (case-sensitive)",
+        key="graph_concept",
+        placeholder="e.g., Attention, Transformer, Machine Learning",
     )
-    
-    if search_concept.strip():
-        neighbors = gs.query_neighborhood(search_concept)
+
+    if concept.strip():
+        neighbors = gs.query_neighborhood(concept)
         if neighbors:
-            st.success(f"Matched '{search_concept}': found {len(neighbors)} relationships.")
+            st.success(f"Found **{len(neighbors)}** relationships for '{concept}'.")
             for r in neighbors:
-                src = r["source"]
-                rel = r["relationship"]
-                tgt = r["target"]
-                tgt_type = r.get("target_type", "Concept")
                 st.markdown(
-                    f'<div class="result-card" style="border-left: 3px solid var(--accent-purple);">'
-                    f'Relation: **{src}** —[{rel}]→ **{tgt}** ({tgt_type})'
+                    f'<div class="result-card" style="border-left:3px solid var(--accent-purple);">'
+                    f'<b>{r["source"]}</b> —[{r["relationship"]}]→ <b>{r["target"]}</b> '
+                    f'({r.get("target_type", "Concept")})'
                     f'</div>',
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
         else:
-            st.warning(f"No connections found for concept '{search_concept}' in graph.")
+            st.warning(f"No connections found for '{concept}'.")
 
-    st.markdown("### 🗺️ Full Graph Connections (Top 50)")
-    
-    # Retrieve top connections
-    connections = []
+    _divider()
+    st.markdown("### 🗺️ Full Graph (Top 50 edges)")
+
+    connections: list[dict] = []
     try:
         if hasattr(gs, "_driver") and gs._driver is not None:
-            query_cypher = (
+            cypher = (
                 "MATCH (a:Concept)-[r]->(b:Concept) "
-                "RETURN a.name as source, type(r) as relationship, b.name as target "
-                "LIMIT 50"
+                "RETURN a.name AS source, type(r) AS relationship, b.name AS target LIMIT 50"
             )
             with gs._driver.session() as session:
-                res = session.run(query_cypher)
                 connections = [
                     {"Source": r["source"], "Relationship": r["relationship"], "Target": r["target"]}
-                    for r in res
+                    for r in session.run(cypher)
                 ]
         elif hasattr(gs, "_edges"):
             connections = [
                 {"Source": e["source"], "Relationship": e["type"], "Target": e["target"]}
                 for e in gs._edges[:50]
             ]
-    except Exception as e:
-        st.error(f"Error loading graph connections: {e}")
+    except Exception as exc:
+        st.error(f"Error loading graph: {exc}")
 
     if connections:
         st.dataframe(connections, use_container_width=True)
     else:
-        st.info("💡 Graph is currently empty. Ingest some PDFs or run E2E Pipeline to build the graph.")
+        st.info("💡 Graph is empty. Ingest PDFs in the Knowledge Base tab to populate it.")
 
-    # Action buttons
-    col_act1, col_act2 = st.columns(2)
-    with col_act1:
-        if st.button("🗑️ Wipe Graph Store", key="btn_clear_graph", use_container_width=True):
-            if gs.clear_graph():
-                st.success("✅ Graph wiped successfully!")
-                st.rerun()
-            else:
-                st.error("❌ Failed to clear graph database.")
+    if st.button("🗑️ Wipe Graph Store", key="btn_clear_graph", use_container_width=True):
+        if gs.clear_graph():
+            st.success("✅ Graph wiped!")
+            st.rerun()
+        else:
+            st.error("❌ Failed to clear graph.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry Point
+# ──────────────────────────────────────────────────────────────────────────────
+def main() -> None:
+    """Main execution point for the Streamlit dashboard."""
+    ensure_data_dirs()
+    _inject_css()
+    _render_sidebar()
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🎙️ Speech-to-Text",
+        "🔄 VietMix Translator",
+        "📚 Knowledge Base",
+        "🕸️ Knowledge Graph",
+    ])
+
+    with tab1:
+        _tab_asr()
+    with tab2:
+        _tab_translation()
+    with tab3:
+        _tab_knowledge_base()
+    with tab4:
+        _tab_graph()
 
 
 if __name__ == "__main__":

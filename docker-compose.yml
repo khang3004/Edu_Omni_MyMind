@@ -19,8 +19,12 @@ x-common-env: &common-env
   NEO4J_PASSWORD: "${NEO4J_PASSWORD:-omni_ips_password}"
   WHISPER_MODEL: "${WHISPER_MODEL:-tiny}"
   EMBEDDING_MODEL: "${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
+  EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
   TRANSLATION_MODEL: "${TRANSLATION_MODEL:-none}"
-  DEVICE: "${DEVICE:-cpu}"
+  LLM_PROVIDER: "${LLM_PROVIDER:-google}"
+  LLM_MODEL: "${LLM_MODEL:-gemma-4-31b-it}"
+  EDUMIND_DEVICE: "${EDUMIND_DEVICE:-cpu}"
+  ENABLE_COLPALI: "${ENABLE_COLPALI:-false}"
 
 services:
   # --- Qdrant Vector Database ---
@@ -91,6 +95,66 @@ services:
       retries: 5
       start_period: 45s
 
+  # --- EduMIND FastAPI REST Server ---
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    image: edumind/api:latest
+    container_name: edumind_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+    volumes:
+      - ./data:/workspace/data
+      - model_cache:/workspace/.cache
+    networks:
+      - edumind_net
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # --- EduMIND Streamlit Dashboard ---
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: streamlit
+    image: edumind/streamlit:latest
+    container_name: edumind_streamlit
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      <<: *common-env
+    volumes:
+      - ./data:/workspace/data
+      - model_cache:/workspace/.cache
+    networks:
+      - edumind_net
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+
   # --- EduMIND ML Backend ---
   ml-backend:
     build:
@@ -134,6 +198,10 @@ volumes:
     driver: local
   neo4j_import:
     driver: local
+  model_cache:
+    driver: local
+    # Shared HuggingFace + Torch model cache across api & streamlit containers
+    # to avoid downloading models twice.
 
 networks:
   edumind_net:

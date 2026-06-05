@@ -61,9 +61,20 @@ create_environment:
 #################################################################################
 
 
-## Launch EduMIND Streamlit dashboard
+## Launch EduMIND Streamlit dashboard (UI on :8501)
 .PHONY: app
 app: requirements
+	$(PYTHON_INTERPRETER) -m streamlit run edumind/app.py --server.headless true
+
+## Launch EduMIND FastAPI server (REST API on :8000, with auto-reload)
+.PHONY: api
+api: requirements
+	$(PYTHON_INTERPRETER) -m uvicorn edumind.api.main:app --reload --host 0.0.0.0 --port 8000
+
+## Launch both FastAPI (port 8000) and Streamlit (port 8501) concurrently
+.PHONY: dev
+dev: requirements
+	$(PYTHON_INTERPRETER) -m uvicorn edumind.api.main:app --host 0.0.0.0 --port 8000 & \
 	$(PYTHON_INTERPRETER) -m streamlit run edumind/app.py --server.headless true
 
 ## Run the performance benchmark suite
@@ -91,6 +102,26 @@ run-ls: install-ls
 .PHONY: docker-up
 docker-up:
 	docker compose up --build -d
+
+## Start ONLY infrastructure (Qdrant + Neo4j) — without app containers
+.PHONY: docker-infra
+docker-infra:
+	docker compose up qdrant neo4j -d
+
+## Build and start ONLY the FastAPI service container
+.PHONY: docker-api
+docker-api:
+	docker compose up api --build -d
+
+## Build and start ONLY the Streamlit service container
+.PHONY: docker-streamlit
+docker-streamlit:
+	docker compose up streamlit --build -d
+
+## Build and start both FastAPI + Streamlit containers (without Label Studio)
+.PHONY: docker-app
+docker-app:
+	docker compose up qdrant neo4j api streamlit --build -d
 
 ## Alias to start the full containerized stack
 .PHONY: docker-up-all
