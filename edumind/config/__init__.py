@@ -6,6 +6,7 @@ Provides thread-safe, cached lazy access to the application settings.
 from __future__ import annotations
 
 import functools
+
 from edumind.config.settings import Settings
 
 

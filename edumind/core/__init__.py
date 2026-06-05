@@ -15,8 +15,8 @@ from edumind.core.container import (
 )
 from edumind.core.exceptions import (
     ConfigurationError,
-    EmbeddingError,
     EduMINDError,
+    EmbeddingError,
     TranslationError,
     VectorStoreError,
 )

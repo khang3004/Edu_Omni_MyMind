@@ -9,16 +9,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Literal
-import os
 
 from pydantic import (
     Field,
-    FieldSerializationInfo,
     SecretStr,
-    SerializerFunctionWrapHandler,
     computed_field,
     field_validator,
-    model_serializer,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -112,7 +108,7 @@ class Settings(BaseSettings):
         if not map_path.exists():
             return {}
         try:
-            with open(map_path, "r", encoding="utf-8") as f:
+            with open(map_path, encoding="utf-8") as f:
                 return dict(json.load(f))
         except Exception:
             return {}

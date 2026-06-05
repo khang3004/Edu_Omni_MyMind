@@ -6,9 +6,9 @@ Exposes:
   - MultimodalRAG: Vector store indexing and semantic QA.
 """
 
+from edumind.modules.rag_engine import MultimodalRAG
 from edumind.modules.speech_processor import CodeSwitchedASR
 from edumind.modules.vietmix_translator import VietMixTranslator
-from edumind.modules.rag_engine import MultimodalRAG
 
 __all__ = [
     "CodeSwitchedASR",

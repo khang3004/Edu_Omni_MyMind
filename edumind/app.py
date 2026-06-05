@@ -24,8 +24,8 @@ try:
 except ImportError:
     pass
 
-import tempfile
 from pathlib import Path
+import tempfile
 
 import streamlit as st
 

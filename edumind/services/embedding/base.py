@@ -6,6 +6,7 @@ Defines the interface for text embedding models to ensure Strategy Pattern confo
 from __future__ import annotations
 
 from typing import Protocol
+
 import numpy as np
 
 

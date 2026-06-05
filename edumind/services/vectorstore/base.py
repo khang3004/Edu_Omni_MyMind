@@ -7,6 +7,7 @@ over document vectors.
 from __future__ import annotations
 
 from typing import Any, Protocol
+
 import numpy as np
 
 from edumind.models.chunks import DocumentChunk, RetrievedChunk
