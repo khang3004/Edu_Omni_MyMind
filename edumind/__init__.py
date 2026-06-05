@@ -10,6 +10,16 @@ Developed by HCMUS Underdogs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+# Load environment variables early so Hugging Face and other libraries see them
+try:
+    from dotenv import load_dotenv
+    proj_root = Path(__file__).resolve().parent.parent
+    load_dotenv(dotenv_path=proj_root / ".env")
+except ImportError:
+    pass
+
 # Suppress annoying/verbose Hugging Face transformers warnings.
 try:
     import transformers

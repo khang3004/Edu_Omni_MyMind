@@ -333,10 +333,7 @@ class EduMINDMLBackend(LabelStudioMLBase):
         }
 
     def _predict_image(self, task_data: dict[str, Any]) -> dict[str, Any]:
-        """Generates an OCR pre-annotation for an image / PDF task.
-
-        Attempts to extract text using ``pypdf`` (for PDFs) or ``pytesseract``
-        (for raster images).  Returns a placeholder on failure.
+        """Generates an OCR pre-annotation for an image / PDF task utilizing IBM Docling.
 
         Args:
             task_data: The ``data`` field of a single Label Studio task.
@@ -347,42 +344,35 @@ class EduMINDMLBackend(LabelStudioMLBase):
         image_ref: str = task_data.get("image", "")
         image_path = self._resolve_local_path(image_ref)
         extracted_text = ""
-        confidence = 0.6  # Conservative default for OCR
+        confidence = 0.75  # Higher default confidence due to Docling's layout parsing
 
         path_obj = Path(image_path)
+        if not path_obj.exists():
+            return self._placeholder_image_prediction(image_ref)
 
-        # ---- PDF extraction -------------------------------------------------
-        if path_obj.suffix.lower() == ".pdf":
+        try:
+            from docling.document_converter import DocumentConverter
+
+            converter = DocumentConverter()
+            result = converter.convert(str(path_obj))
+            doc = result.output
+
+            text_parts = []
+            for element in doc.elements:
+                if hasattr(element, "text") and element.text:
+                    text_parts.append(element.text.strip())
+
+            extracted_text = "\n\n".join(text_parts)
+        except Exception as exc:
+            logger.warning("docling_ocr_failed", error=str(exc), path=image_path)
+            # Fallback to simple txt file reading if it's plain text
             try:
-                from pypdf import PdfReader
+                with open(path_obj, encoding="utf-8", errors="ignore") as f:
+                    extracted_text = f.read()
+            except Exception:
+                extracted_text = ""
 
-                reader = PdfReader(str(path_obj))
-                pages_text = [
-                    (page.extract_text() or "").strip()
-                    for page in reader.pages
-                ]
-                extracted_text = "\n\n".join(t for t in pages_text if t)
-                confidence = 0.75
-            except Exception as exc:
-                logger.warning("pdf_ocr_failed", error=str(exc), path=image_path)
-
-        # ---- Raster image via Tesseract -------------------------------------
-        elif path_obj.suffix.lower() in {".png", ".jpg", ".jpeg", ".tiff", ".bmp"}:
-            try:
-                import pytesseract
-                from PIL import Image
-
-                img = Image.open(str(path_obj))
-                extracted_text = pytesseract.image_to_string(img, lang="vie+eng")
-                confidence = 0.65
-            except ImportError:
-                logger.warning(
-                    "pytesseract_or_pillow_not_installed_using_placeholder"
-                )
-            except Exception as exc:
-                logger.warning("tesseract_ocr_failed", error=str(exc), path=image_path)
-
-        if not extracted_text:
+        if not extracted_text.strip():
             return self._placeholder_image_prediction(image_ref)
 
         return {
@@ -397,7 +387,7 @@ class EduMINDMLBackend(LabelStudioMLBase):
                 }
             ],
             "score": confidence,
-            "model_version": "edumind-ocr-v1",
+            "model_version": "edumind-docling-ocr-v1",
         }
 
     # -----------------------------------------------------------------------
@@ -460,6 +450,20 @@ class EduMINDMLBackend(LabelStudioMLBase):
                     gold_translation = self._translator.translate_to_english(gold_text)
                 except Exception as exc:
                     logger.warning("fit_translation_failed", error=str(exc))
+
+            # ---- Dynamic Teencode Learning ----------------------------------
+            if self._asr is not None:
+                try:
+                    original_transcript = self._extract_prediction_text(task)
+                    if original_transcript:
+                        changes = self._asr.get_corrections(original_transcript, gold_text)
+                        for ch in changes:
+                            orig = str(ch.get("original", ""))
+                            corr = str(ch.get("corrected", ""))
+                            if orig and corr:
+                                self._asr.update_teencode(orig, corr)
+                except Exception as exc:
+                    logger.warning("fit_teencode_learning_failed", error=str(exc))
 
             # ---- Build corpus record ----------------------------------------
             audio_ref: str = task_data.get("audio", task_data.get("image", ""))
@@ -658,3 +662,21 @@ class EduMINDMLBackend(LabelStudioMLBase):
             "score": 0.0,
             "model_version": "edumind-fallback",
         }
+
+    def _extract_prediction_text(self, task: dict[str, Any]) -> str:
+        """Extracts the original ASR/OCR text prediction generated by this ML Backend.
+
+        Searches within the prediction payload to find the initial generated text value.
+        """
+        predictions = task.get("predictions", [])
+        if not predictions:
+            return ""
+
+        pred = predictions[0]
+        results = pred.get("result", [])
+        texts = []
+        for item in results:
+            if item.get("type") == "textarea" and item.get("from_name") in {_AUDIO_FROM_NAME, _IMAGE_FROM_NAME}:
+                val = item.get("value", {}).get("text", [])
+                texts.extend(str(t).strip() for t in val if t)
+        return " ".join(texts).strip()

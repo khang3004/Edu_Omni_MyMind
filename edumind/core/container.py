@@ -22,7 +22,7 @@ from edumind.services.vectorstore import QdrantVectorStore, VectorStore
 
 logger = get_logger(__name__)
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 # Cached singleton service instances
 _embedding_provider: EmbeddingProvider | None = None

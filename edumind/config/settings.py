@@ -20,6 +20,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJ_ROOT = Path(__file__).resolve().parents[2]
 
+# Load environment variables from .env file into os.environ
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=PROJ_ROOT / ".env")
+except ImportError:
+    pass
+
 
 class Settings(BaseSettings):
     """Pydantic settings for the application.

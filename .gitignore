@@ -186,3 +186,4 @@ cython_debug/
 .pypirc
 
 /tests/*
+label_studio_backend/README.md

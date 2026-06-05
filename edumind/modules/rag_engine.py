@@ -39,6 +39,13 @@ class CrossEncoderReRanker:
         self.model_name = model_name
         self._model = None
         self._attempted = False
+        
+        # Instantiate a Time-To-Live (TTL) cache to bypass scoring repetitive queries/contexts
+        try:
+            from cachetools import TTLCache
+            self._cache = TTLCache(maxsize=256, ttl=300)
+        except ImportError:
+            self._cache = {}
 
     def load(self) -> None:
         """Lazily loads the Cross-Encoder model into memory."""
@@ -59,12 +66,13 @@ class CrossEncoderReRanker:
             )
             self._model = None
 
-    def re_rank(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    def re_rank(self, query: str, chunks: list[RetrievedChunk], max_candidates: int = 10) -> list[RetrievedChunk]:
         """Re-scores retrieved passages relative to the query.
 
         Args:
             query: User search query.
             chunks: List of passages retrieved from vector search.
+            max_candidates: Limit candidate passages to avoid high CPU latency bottleneck.
 
         Returns:
             Re-ordered list of chunks.
@@ -72,23 +80,42 @@ class CrossEncoderReRanker:
         if not chunks:
             return chunks
 
+        # Slice candidates to re-rank, leaving the rest untouched to preserve speed
+        candidates = chunks[:max_candidates]
+        remaining = chunks[max_candidates:]
+
         self.load()
         if self._model is None:
             return chunks
 
         try:
-            pairs = [[query, c.text] for c in chunks]
-            # Predict similarity scores
-            scores = self._model.predict(pairs)
+            uncached_indices = []
+            uncached_pairs = []
 
-            # Map raw logit scores to standard [0, 1] probability range via sigmoid
-            for chunk, score in zip(chunks, scores):
-                val = float(score)
-                sigmoid_score = 1.0 / (1.0 + np.exp(-val))
-                chunk.score = round(sigmoid_score, 4)
+            for idx, c in enumerate(candidates):
+                cache_key = (query, c.text)
+                if cache_key in self._cache:
+                    c.score = self._cache[cache_key]
+                else:
+                    uncached_indices.append(idx)
+                    uncached_pairs.append([query, c.text])
 
-            # Re-sort descending
-            return sorted(chunks, key=lambda x: x.score, reverse=True)
+            # Predict in batch for cache misses
+            if uncached_pairs:
+                scores = self._model.predict(uncached_pairs)
+                for score_idx, original_idx in enumerate(uncached_indices):
+                    val = float(scores[score_idx])
+                    # Sigmoid maps logit score to standard probability interval [0, 1]
+                    sigmoid_score = 1.0 / (1.0 + np.exp(-val))
+                    rounded_score = round(sigmoid_score, 4)
+                    
+                    chunk = candidates[original_idx]
+                    chunk.score = rounded_score
+                    # Save to cache
+                    self._cache[(query, chunk.text)] = rounded_score
+
+            all_processed = candidates + remaining
+            return sorted(all_processed, key=lambda x: x.score, reverse=True)
         except Exception as e:
             logger.warning("cross_encoder_rerank_failed_using_original", error=str(e))
             return chunks
@@ -163,41 +190,92 @@ class MultimodalRAG:
         Raises:
             FileNotFoundError: If the target PDF file does not exist.
         """
-        pdf_path = Path(pdf_path)
-        if not pdf_path.exists():
-            raise FileNotFoundError(f"PDF file does not exist: {pdf_path}")
+        return self.ingest_file(pdf_path)
 
-        logger.info("ingesting_pdf_file", file_name=pdf_path.name)
+    def ingest_file(self, file_path: str | Path) -> list[DocumentChunk]:
+        """Parses any supported document format using IBM Docling, or routes audio files to Whisper.
 
+        Supported formats include: PDF, DOCX, PPTX, XLSX, HTML, images, LaTeX, TXT, WAV, MP3, WebVTT, EML, MSG.
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File does not exist: {file_path}")
+
+        suffix = file_path.suffix.lower()
+
+        # 1. Routing Audio Files (WAV, MP3, M4A, FLAC, OGG) to ASR Note-Taker
+        if suffix in {".wav", ".mp3", ".m4a", ".flac", ".ogg"}:
+            logger.info("routing_audio_file_to_asr_pipeline", file_name=file_path.name)
+            try:
+                from edumind.modules.speech_processor import CodeSwitchedASR
+                asr = CodeSwitchedASR()
+                transcript = asr.transcribe(file_path)
+                corrected_text = asr.post_process(transcript.text)
+                return self.ingest_text(
+                    text=corrected_text,
+                    source_name=file_path.name,
+                    metadata_extra={"source_type": "🎙️ Transcript"}
+                )
+            except Exception as e:
+                logger.error("audio_routing_failed", file_name=file_path.name, error=str(e))
+                return []
+
+        # 2. Document/Visual File Parsing using IBM Docling
+        logger.info("ingesting_file_via_docling", file_name=file_path.name, format=suffix)
         try:
-            from pypdf import PdfReader
+            from docling.document_converter import DocumentConverter
 
-            reader = PdfReader(str(pdf_path))
+            converter = DocumentConverter()
+            result = converter.convert(str(file_path))
+            doc = result.output
+
             chunks: list[DocumentChunk] = []
-            chunk_index = 0
+            current_section = "Untitled Section"
 
-            for page_num, page in enumerate(reader.pages, start=1):
-                page_text = page.extract_text() or ""
-                if not page_text.strip():
+            for idx, element in enumerate(doc.elements):
+                text_content = element.text if hasattr(element, "text") else ""
+                if not text_content or not text_content.strip():
                     continue
 
-                page_chunks = self._layout_aware_split(
-                    text=page_text,
-                    page_number=page_num,
-                    source_file=pdf_path.name,
-                    start_chunk_index=chunk_index,
-                )
-                chunks.extend(page_chunks)
-                chunk_index += len(page_chunks)
+                element_type = element.type.name if hasattr(element, "type") and hasattr(element.type, "name") else str(getattr(element, "type", "paragraph"))
 
-            logger.info("pdf_ingested_successfully", pages=len(reader.pages), chunks=len(chunks))
+                # Deduce page number if available
+                page_num = 1
+                if hasattr(element, "prov") and element.prov:
+                    page_num = element.prov[0].page_no
+
+                if "heading" in element_type.lower():
+                    current_section = text_content.strip()
+
+                # Split long elements cleanly
+                for sub_text in split_long_text(text_content, max_size=500, overlap=50):
+                    chunks.append(DocumentChunk(
+                        text=sub_text,
+                        metadata={
+                            "page_number": page_num,
+                            "source_file": file_path.name,
+                            "section_header": current_section,
+                            "chunk_index": idx,
+                            "type": element_type,
+                            "source_type": f"📄 {suffix[1:].upper()} Document"
+                        },
+                    ))
+
+            logger.info("docling_ingestion_completed", file_name=file_path.name, chunks_count=len(chunks))
             return chunks
 
         except ImportError:
-            logger.error("pypdf_library_missing", reason="pypdf is not installed")
-            return []
+            logger.error("docling_library_missing_falling_back_to_txt", reason="docling is not installed")
+            # Graceful local fallback to plain text parsing if docling is missing
+            try:
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
+                    text_content = f.read()
+                return self.ingest_text(text_content, source_name=file_path.name)
+            except Exception as e:
+                logger.error("fallback_plain_text_read_failed", error=str(e))
+                return []
         except Exception as e:
-            logger.error("pdf_ingestion_failed", file=pdf_path.name, error=str(e))
+            logger.error("docling_ingestion_failed", file_name=file_path.name, error=str(e))
             return []
 
     def ingest_text(
@@ -249,53 +327,34 @@ class MultimodalRAG:
         current_paragraph: list[str] = []
         idx = start_chunk_index
 
-        for line in lines:
-            stripped = line.strip()
-
-            if is_section_header(stripped):
-                # Flush existing paragraph
-                if current_paragraph:
-                    para_text = " ".join(current_paragraph).strip()
-                    if para_text:
-                        for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
-                            chunks.append(DocumentChunk(
-                                text=sub_chunk,
-                                metadata={
-                                    "page_number": page_number,
-                                    "source_file": source_file,
-                                    "section_header": current_section,
-                                    "chunk_index": idx,
-                                    "type": "paragraph",
-                                },
-                            ))
-                            idx += 1
-                    current_paragraph = []
-                current_section = stripped
-
-            elif stripped == "":
-                # Empty line boundary
-                if current_paragraph:
-                    para_text = " ".join(current_paragraph).strip()
-                    if para_text:
-                        for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
-                            chunks.append(DocumentChunk(
-                                text=sub_chunk,
-                                metadata={
-                                    "page_number": page_number,
-                                    "source_file": source_file,
-                                    "section_header": current_section,
-                                    "chunk_index": idx,
-                                    "type": "paragraph",
-                                },
-                            ))
-                            idx += 1
-                    current_paragraph = []
-            else:
-                current_paragraph.append(stripped)
-
-        # Flush trailing
-        if current_paragraph:
-            para_text = " ".join(current_paragraph).strip()
+        def flush_paragraph(paragraph_lines: list[str], section: str, chunk_idx: int) -> int:
+            if not paragraph_lines:
+                return chunk_idx
+            
+            joined_text_parts = []
+            for i, line_text in enumerate(paragraph_lines):
+                line_str = line_text.strip()
+                if not line_str:
+                    continue
+                
+                # Handle physical line end hyphenation (e.g. multi-\nmodal)
+                if line_str.endswith("-") and len(line_str) > 1:
+                    joined_text_parts.append(line_str[:-1])
+                else:
+                    if joined_text_parts:
+                        prev_line = paragraph_lines[i - 1].strip()
+                        # If previous line did not end with standard sentence punctuation, merge with space
+                        if prev_line and prev_line[-1] not in (".", "?", "!", ":", ";"):
+                            joined_text_parts.append(" " + line_str)
+                        else:
+                            joined_text_parts.append("\n" + line_str)
+                    else:
+                        joined_text_parts.append(line_str)
+            
+            para_text = "".join(joined_text_parts).strip()
+            # Normalize redundant spaces
+            para_text = re.sub(r"[ \t]+", " ", para_text)
+            
             if para_text:
                 for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
                     chunks.append(DocumentChunk(
@@ -303,13 +362,32 @@ class MultimodalRAG:
                         metadata={
                             "page_number": page_number,
                             "source_file": source_file,
-                            "section_header": current_section,
-                            "chunk_index": idx,
+                            "section_header": section,
+                            "chunk_index": chunk_idx,
                             "type": "paragraph",
                         },
                     ))
-                    idx += 1
+                    chunk_idx += 1
+            return chunk_idx
 
+        for line in lines:
+            stripped = line.strip()
+
+            if is_section_header(stripped):
+                # Flush existing paragraph
+                idx = flush_paragraph(current_paragraph, current_section, idx)
+                current_paragraph = []
+                current_section = stripped
+
+            elif stripped == "":
+                # Empty line boundary
+                idx = flush_paragraph(current_paragraph, current_section, idx)
+                current_paragraph = []
+            else:
+                current_paragraph.append(stripped)
+
+        # Flush trailing content
+        idx = flush_paragraph(current_paragraph, current_section, idx)
         return chunks
 
     # ------------------------------------------------------------------

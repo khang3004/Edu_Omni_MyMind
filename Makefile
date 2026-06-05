@@ -66,6 +66,11 @@ create_environment:
 app: requirements
 	$(PYTHON_INTERPRETER) -m streamlit run edumind/app.py --server.headless true
 
+## Run the performance benchmark suite
+.PHONY: benchmark
+benchmark: requirements
+	$(PYTHON_INTERPRETER) -m edumind.utils.benchmark
+
 ## Run EduMIND tests via pytest
 .PHONY: test-edumind
 test-edumind: requirements

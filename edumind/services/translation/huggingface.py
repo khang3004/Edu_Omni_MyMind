@@ -29,6 +29,8 @@ class HuggingFaceTranslationProvider(TranslationProvider):
         self._fallback = RuleBasedTranslationProvider()
         self._load_attempted = False
         self._usable = False
+        self._supported_direction = "both"
+        self._use_prefix = False
 
     def _load_model(self) -> None:
         """Lazily loads the transformer model and tokenizer."""
@@ -41,8 +43,28 @@ class HuggingFaceTranslationProvider(TranslationProvider):
             self._usable = False
             return
 
+        # Analyze direction support based on model naming patterns
+        name_lower = self._model_name.lower()
+        if "vi-en" in name_lower or "vi2en" in name_lower:
+            self._supported_direction = "vi-en"
+        elif "en-vi" in name_lower or "en2vi" in name_lower:
+            self._supported_direction = "en-vi"
+        else:
+            self._supported_direction = "both"
+
+        # Check if model requires a prefix (typically T5/mT5 models)
+        if "t5" in name_lower:
+            self._use_prefix = True
+        else:
+            self._use_prefix = False
+
         try:
-            logger.info("loading_huggingface_translation_model", model_name=self._model_name)
+            logger.info(
+                "loading_huggingface_translation_model",
+                model_name=self._model_name,
+                direction=self._supported_direction,
+                use_prefix=self._use_prefix,
+            )
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
             self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
@@ -71,7 +93,8 @@ class HuggingFaceTranslationProvider(TranslationProvider):
             return ""
 
         self._load_model()
-        if not self._usable:
+        # Fallback if model loading failed or if model only supports English -> Vietnamese
+        if not self._usable or self._supported_direction == "en-vi":
             return self._fallback.translate_to_english(text)
 
         return self._model_translate(text, target="en")
@@ -82,7 +105,8 @@ class HuggingFaceTranslationProvider(TranslationProvider):
             return ""
 
         self._load_model()
-        if not self._usable:
+        # Fallback if model loading failed or if model only supports Vietnamese -> English
+        if not self._usable or self._supported_direction == "vi-en":
             return self._fallback.translate_to_vietnamese(text)
 
         return self._model_translate(text, target="vi")
@@ -93,9 +117,13 @@ class HuggingFaceTranslationProvider(TranslationProvider):
             assert self._tokenizer is not None
             assert self._model is not None
 
-            prefix = f"translate to {target}: "
+            input_text = text
+            if self._use_prefix:
+                prefix = f"translate to {target}: "
+                input_text = prefix + text
+
             inputs = self._tokenizer(
-                prefix + text,
+                input_text,
                 return_tensors="pt",
                 max_length=512,
                 truncation=True,

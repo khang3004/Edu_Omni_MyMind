@@ -9,6 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+import threading
+import json
+
 from edumind.config import get_settings
 from edumind.core.logging import get_logger
 from edumind.models.transcription import TranscriptResult, TranscriptSegment
@@ -40,9 +43,14 @@ class CodeSwitchedASR:
         self.model_name = model_name or settings.WHISPER_MODEL
         self._model = None
         self._is_mock_mode = False
+        self._lock = threading.Lock()
+        self.dynamic_teencode_path = settings.DATA_DIR / "processed" / "dynamic_teencode.json"
 
         # Load teencode mapping from configuration if not explicitly provided
-        self.teencode_map = teencode_map if teencode_map is not None else settings.TEENCODE_MAP
+        self.teencode_map = teencode_map if teencode_map is not None else dict(settings.TEENCODE_MAP)
+
+        if teencode_map is None:
+            self._load_dynamic_teencode()
 
         # Initialize the Whisper model
         self._load_model()
@@ -256,6 +264,55 @@ class CodeSwitchedASR:
             language="vi",
             is_mock=True,
         )
+
+    def _load_dynamic_teencode(self) -> None:
+        """Loads dynamic teencode corrections from local JSON files."""
+        if self.dynamic_teencode_path.exists():
+            try:
+                with open(self.dynamic_teencode_path, encoding="utf-8") as f:
+                    dyn_map = json.load(f)
+                    if isinstance(dyn_map, dict):
+                        self.teencode_map.update(dyn_map)
+                        logger.info("loaded_dynamic_teencode_mapping", count=len(dyn_map))
+            except Exception as e:
+                logger.warning("failed_to_load_dynamic_teencode", error=str(e))
+
+    def update_teencode(self, orig: str, corr: str) -> None:
+        """Dynamically updates the teencode map and serializes to disk.
+
+        Thread-safe execution ensures multiple webhooks do not cause race conditions.
+        """
+        orig_clean = orig.strip().lower()
+        corr_clean = corr.strip().lower()
+
+        if not orig_clean or not corr_clean or orig_clean == corr_clean:
+            return
+
+        # Avoid learning numbers or extremely long phrases as shorthand keys
+        if not orig_clean.isalpha() or len(orig_clean) >= len(corr_clean):
+            return
+
+        with self._lock:
+            self.teencode_map[orig_clean] = corr_clean
+
+            # Read existing dynamic teencode to avoid overwriting other values
+            dyn_map = {}
+            if self.dynamic_teencode_path.exists():
+                try:
+                    with open(self.dynamic_teencode_path, encoding="utf-8") as f:
+                        dyn_map = json.load(f)
+                except Exception:
+                    dyn_map = {}
+
+            dyn_map[orig_clean] = corr_clean
+
+            try:
+                self.dynamic_teencode_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.dynamic_teencode_path, "w", encoding="utf-8") as f:
+                    json.dump(dyn_map, f, ensure_ascii=False, indent=4)
+                logger.info("dynamic_teencode_map_updated", original=orig_clean, corrected=corr_clean)
+            except Exception as e:
+                logger.error("failed_to_write_dynamic_teencode", error=str(e))
 
     @property
     def is_ready(self) -> bool:
