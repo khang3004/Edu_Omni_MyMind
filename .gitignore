@@ -187,3 +187,4 @@ cython_debug/
 
 /tests/*
 label_studio_backend/README.md
+notebooks/finetune/README.md
