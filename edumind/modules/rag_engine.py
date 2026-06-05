@@ -227,24 +227,24 @@ class MultimodalRAG:
 
             converter = DocumentConverter()
             result = converter.convert(str(file_path))
-            doc = result.output
+            doc = result.document
 
             chunks: list[DocumentChunk] = []
             current_section = "Untitled Section"
 
-            for idx, element in enumerate(doc.elements):
-                text_content = element.text if hasattr(element, "text") else ""
+            for idx, (item, level) in enumerate(doc.iterate_items()):
+                text_content = item.text if hasattr(item, "text") else ""
                 if not text_content or not text_content.strip():
                     continue
 
-                element_type = element.type.name if hasattr(element, "type") and hasattr(element.type, "name") else str(getattr(element, "type", "paragraph"))
+                label_val = str(item.label) if hasattr(item, "label") else "paragraph"
 
                 # Deduce page number if available
                 page_num = 1
-                if hasattr(element, "prov") and element.prov:
-                    page_num = element.prov[0].page_no
+                if hasattr(item, "prov") and item.prov:
+                    page_num = item.prov[0].page_no
 
-                if "heading" in element_type.lower():
+                if "heading" in label_val.lower() or "header" in label_val.lower() or "title" in label_val.lower():
                     current_section = text_content.strip()
 
                 # Split long elements cleanly
@@ -256,7 +256,7 @@ class MultimodalRAG:
                             "source_file": file_path.name,
                             "section_header": current_section,
                             "chunk_index": idx,
-                            "type": element_type,
+                            "type": label_val,
                             "source_type": f"📄 {suffix[1:].upper()} Document"
                         },
                     ))

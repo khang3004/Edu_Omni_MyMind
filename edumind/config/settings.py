@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     TRANSLATION_MODEL: str = Field(default="none")
 
     # --- Qdrant (explicitly not prefixed with EDUMIND_) ---
-    QDRANT_MODE: Literal["memory", "server"] = Field(
+    QDRANT_MODE: Literal["memory", "local", "server"] = Field(
         default="memory",
         validation_alias="QDRANT_MODE",
     )

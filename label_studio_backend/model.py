@@ -355,12 +355,12 @@ class EduMINDMLBackend(LabelStudioMLBase):
 
             converter = DocumentConverter()
             result = converter.convert(str(path_obj))
-            doc = result.output
+            doc = result.document
 
             text_parts = []
-            for element in doc.elements:
-                if hasattr(element, "text") and element.text:
-                    text_parts.append(element.text.strip())
+            for item, level in doc.iterate_items():
+                if hasattr(item, "text") and item.text:
+                    text_parts.append(item.text.strip())
 
             extracted_text = "\n\n".join(text_parts)
         except Exception as exc:

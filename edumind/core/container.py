@@ -112,6 +112,7 @@ def get_vectorstore() -> VectorStore:
                 api_key=settings.QDRANT_API_KEY.get_secret_value(),
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 embedding_dim=emb_provider.dimension,
+                path=str(settings.DATA_DIR / "qdrant_db"),
             )
 
         return _vectorstore

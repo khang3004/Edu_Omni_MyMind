@@ -31,6 +31,7 @@ class QdrantVectorStore(VectorStore):
         api_key: str = "",
         collection_name: str = "edumind_documents",
         embedding_dim: int = 384,
+        path: str = "",
     ):
         """Initializes the Qdrant connection and verifies collection schema."""
         self._mode = mode
@@ -39,6 +40,7 @@ class QdrantVectorStore(VectorStore):
         self._api_key = api_key
         self._collection_name = collection_name
         self._embedding_dim = embedding_dim
+        self._path = path
         self._client: Any = None
         self._ready = False
 
@@ -52,6 +54,9 @@ class QdrantVectorStore(VectorStore):
             if self._mode == "memory":
                 logger.info("initializing_qdrant_in_memory")
                 self._client = QdrantClient(":memory:")
+            elif self._mode == "local":
+                logger.info("initializing_qdrant_local_disk", path=self._path)
+                self._client = QdrantClient(path=self._path)
             else:
                 logger.info("connecting_to_qdrant_server", host=self._host, port=self._port)
                 self._client = QdrantClient(
