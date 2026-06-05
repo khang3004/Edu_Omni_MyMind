@@ -1,83 +1,109 @@
-# Contributing Guidelines - NLP Research & Development
+# Contributing to EduMIND
 
-Welcome to the NLP Research Team! To maintain high code quality, absolute scientific reproducibility, and seamless collaboration, all members are expected to adhere to the standards outlined in this guide.
+First, thank you for contributing to **EduMIND (Bilingual Lecture Assistant)**! To maintain high code quality, architectural consistency, and reproducible NLP/ML research, we require all contributors to adhere to the guidelines outlined in this document.
 
 ---
 
 ## 1. Git Workflow & Branch Strategy
 
-We follow a structured branch strategy. Never commit directly to `main`. Always create a branch from `main` and submit a Pull Request (PR) for review.
+We follow a structured branch naming and merge workflow. Never push directly to `main`. Always create a local branch and submit a Pull Request (PR) for review.
 
 ### Branch Naming Conventions
-* **Features:** `feat/feature-name` (e.g., `feat/bert-classifier`)
-* **Bug Fixes:** `fix/bug-description` (e.g., `fix/dataloader-padding-leak`)
-* **Experiments:** `research/experiment-name` (e.g., `research/eval-lora-tuning`)
-* **Refactoring:** `refactor/area-changed` (e.g., `refactor/pydantic-config`)
-* **Documentation:** `docs/page-name` (e.g., `docs/add-installation-guide`)
+* **Features:** `feat/feature-name` (e.g., `feat/add-whisper-m1-support`)
+* **Bug Fixes:** `fix/bug-description` (e.g., `fix/qdrant-memory-leak`)
+* **Refactoring:** `refactor/component-name` (e.g., `refactor/di-container`)
+* **Documentation:** `docs/page-name` (e.g., `docs/update-installation-guide`)
+* **Testing:** `test/test-case` (e.g., `test/add-translator-tests`)
 
 ---
 
 ## 2. Commit Message Standards
 
-We enforce **Conventional Commits** to auto-generate changelogs and keep commit histories clean. Commit messages must be structured as:
+Commit messages must follow the **Conventional Commits** specification. This helps in auto-generating changelogs and keeping history readable.
 
-```
+Format:
+```text
 <type>(<scope>): <short description>
 ```
 
 ### Approved Commit Types:
-* **`feat`**: A new model architecture, data preprocess step, or utility.
-* **`fix`**: A bug fix (e.g., resolving a dimension mismatch in attention).
-* **`docs`**: Documentation updates (e.g., editing `README.md`).
-* **`style`**: Changes that do not affect the meaning of the code (formatting, white-space).
-* **`refactor`**: Code changes that neither fix a bug nor add a feature.
-* **`perf`**: A code change that improves compute/inference speed or memory consumption.
-* **`test`**: Adding missing tests or correcting existing tests.
-* **`chore`**: Maintenance tasks, library upgrades, or modifying project build configurations.
+* **`feat`**: A new feature, module, or architecture component.
+* **`fix`**: A bug fix (e.g., correcting ASR post-processing regex).
+* **`docs`**: Documentation updates (e.g., README or docstrings).
+* **`style`**: Formatting, missing semi-colons, white-space changes (no logic changes).
+* **`refactor`**: Code restructuring that neither fixes a bug nor adds a feature.
+* **`perf`**: Changes that improve execution latency, memory utilization, or hardware acceleration.
+* **`test`**: Adding missing tests or refactoring test suites.
+* **`chore`**: Maintenance tasks, library upgrades, or modifying build configurations.
 
 ### Examples:
-* `feat(model): add registry decorator and custom transformer architecture`
-* `fix(data): fix padding collation truncation inside dataloader`
-* `docs(readme): add training execution guide for multi-GPU hardware`
+* `feat(asr): add teencode mapping post-processor for Vietnamese lecture notes`
+* `fix(rag): resolve off-by-one error during layout-aware PDF text chunking`
+* `refactor(core): decouple translation providers using the Strategy pattern`
 
 ---
 
-## 3. Code Style & Formatting
+## 3. Clean Architecture Guidelines
 
-We use **Ruff** for strict linting, import sorting, and code formatting. Before committing any code, you must format it using our configurations.
+EduMIND is designed to be highly modular, testable, and production-ready. We enforce the following structural constraints:
 
-### Commands:
-To format and fix lint errors automatically:
+### No Global Singletons
+Avoid importing global shared instances of heavy services (e.g., a shared Qdrant client, embedding models, or Whisper pipelines). Instead, use **Dependency Injection (DI)**. Services must accept their dependencies via constructor parameters.
+
+* **Incorrect:**
+  ```python
+  from edumind.core.clients import qdrant_client
+  class MultimodalRAG:
+      def search(self, query):
+          qdrant_client.query(...)
+  ```
+* **Correct:**
+  ```python
+  class MultimodalRAG:
+      def __init__(self, vector_store: VectorStore):
+          self._vector_store = vector_store
+  ```
+
+### Strategy Pattern for Providers
+Services that connect to external APIs or local models must define a clear interface (base class) and use specific strategy implementations (e.g., `TranslationProvider` has `RuleBasedTranslationProvider` and `HuggingFaceTranslationProvider`).
+
+### Configuration & Validation
+Hyperparameters and server options must not be hardcoded. Define settings in `configs/default_config.yaml` or `.env` and load them using schema-validated Pydantic structures (`edumind/config/`).
+
+---
+
+## 4. Code Style & Formatting
+
+We use **Ruff** for strict linting, import sorting, and code formatting. Before committing any changes, you must format the codebase:
+
 ```bash
+# Format codebase (checks & fixes imports and style)
 make format
-```
-To run checkers only:
-```bash
+
+# Verify strict compliance
 make lint
 ```
 
-### General Style Expectations:
-1. **Type Hints:** All function signatures must be fully type-hinted (parameters and return types).
-2. **Docstrings:** All classes and public functions must have descriptive docstrings following the Google Docstring Format.
-3. **No Magic Numbers:** Define hyperparameter values or threshold settings in `configs/default_config.yaml` rather than hardcoding them in Python files.
+### Style Expectations
+1. **Type Hints:** All function parameters and return types must be fully type-hinted.
+2. **Docstrings:** All classes, modules, and public functions must have docstrings in **Google Docstring Format**.
+3. **Python Version:** The codebase is locked to Python `3.10` via `pyproject.toml` and `uv`.
 
 ---
 
-## 4. Jupyter Notebook Best Practices
+## 5. Jupyter Notebooks
 
-Jupyter Notebooks are fantastic for exploratory data analysis (EDA) and rapid prototyping, but they can quickly lead to out-of-order execution bugs and massive Git diffs if not managed correctly.
-
-1. **Keep Notebooks in `/notebooks`:** Never run training or production runs from notebooks. Use them only for EDA, visualization, or quick proof-of-concept testing.
-2. **Strip Outputs Before Committing:** Run `Kernel -> Restart & Clear All Outputs` before committing notebooks. This keeps Git diffs minimal and clean.
-3. **Migrate to Scripts:** Once a prototype model or preprocessing method is stable, refactor and migrate it immediately into the core package (`nlp_model_training/`).
+Jupyter Notebooks in `notebooks/` should only be used for **Exploratory Data Analysis (EDA)** or **prototyping**.
+* **Do not** write core product features or pipeline steps as notebooks.
+* Always **Restart & Clear All Outputs** before committing notebooks to minimize Git diff size.
+* Migrate finalized prototypes to standard modules under `edumind/` as soon as they are stable.
 
 ---
 
-## 5. Pull Request & Review Checklist
+## 6. Pull Request Checklist
 
-Before marking your PR as ready for review, check off these items:
-- [ ] My code successfully builds and passes all tests (`make test`).
-- [ ] My code adheres to the Ruff formatting requirements (`make lint`).
-- [ ] I have fully documented new classes/functions with docstrings.
-- [ ] If I changed configurations, I updated `configs/default_config.yaml`.
-- [ ] My commit messages follow the Conventional Commits specification.
+Before submitting your PR, ensure:
+- [ ] Code formats cleanly with `make format` and passes `make lint`.
+- [ ] All unit and integration tests pass successfully (`make test`).
+- [ ] All new functions/classes are documented with Google-style docstrings.
+- [ ] No global singletons are introduced, and dependencies are cleanly injected.
