@@ -8,8 +8,7 @@ This module handles Retrieval-Augmented Generation (RAG) for teaching documents:
   5. Synthesizes contextual answers utilizing generative AI model providers.
 """
 
-from __future__ import annotations
-
+import json
 from pathlib import Path
 import re
 
@@ -20,6 +19,7 @@ from edumind.core.exceptions import EmbeddingError, VectorStoreError
 from edumind.core.logging import get_logger
 from edumind.models.chunks import DocumentChunk, RetrievedChunk
 from edumind.services.embedding.base import EmbeddingProvider
+from edumind.services.graphstore.base import GraphStore
 from edumind.services.llm.base import LLMProvider
 from edumind.services.vectorstore.base import VectorStore
 from edumind.utils.text import is_section_header, split_long_text
@@ -133,6 +133,7 @@ class MultimodalRAG:
         embedding_provider: EmbeddingProvider | None = None,
         vectorstore: VectorStore | None = None,
         llm_provider: LLMProvider | None = None,
+        graph_store: GraphStore | None = None,
         rerank_model_name: str | None = None,
     ):
         """Initializes the MultimodalRAG engine.
@@ -141,11 +142,13 @@ class MultimodalRAG:
             embedding_provider: Embedding model strategy. If None, resolves from container.
             vectorstore: Vector database strategy. If None, resolves from container.
             llm_provider: Answer generator strategy. If None, resolves from container.
+            graph_store: Graph database strategy. If None, resolves from container.
             rerank_model_name: Cross-encoder re-ranking model path (optional).
         """
         self._embedding_provider = embedding_provider
         self._vectorstore = vectorstore
         self._llm_provider = llm_provider
+        self._graph_store = graph_store
 
         # Setup cross-encoder re-ranker
         self._reranker = (
@@ -153,6 +156,7 @@ class MultimodalRAG:
             if rerank_model_name
             else CrossEncoderReRanker()
         )
+        self._doc_converter = None
 
     def _get_embedding_provider(self) -> EmbeddingProvider:
         """Retrieves the active embedding provider, resolving from container if needed."""
@@ -174,6 +178,13 @@ class MultimodalRAG:
             from edumind.core.container import get_llm_provider
             self._llm_provider = get_llm_provider()
         return self._llm_provider
+
+    def _get_graph_store(self) -> GraphStore:
+        """Retrieves the active graph store, resolving from container if needed."""
+        if self._graph_store is None:
+            from edumind.core.container import get_graph_store
+            self._graph_store = get_graph_store()
+        return self._graph_store
 
     # ------------------------------------------------------------------
     # Ingestion & Layout-Aware Parsing
@@ -223,10 +234,11 @@ class MultimodalRAG:
         # 2. Document/Visual File Parsing using IBM Docling
         logger.info("ingesting_file_via_docling", file_name=file_path.name, format=suffix)
         try:
-            from docling.document_converter import DocumentConverter
+            if self._doc_converter is None:
+                from docling.document_converter import DocumentConverter
+                self._doc_converter = DocumentConverter()
 
-            converter = DocumentConverter()
-            result = converter.convert(str(file_path))
+            result = self._doc_converter.convert(str(file_path))
             doc = result.document
 
             chunks: list[DocumentChunk] = []
@@ -262,6 +274,17 @@ class MultimodalRAG:
                     ))
 
             logger.info("docling_ingestion_completed", file_name=file_path.name, chunks_count=len(chunks))
+
+            # Explicit memory cleanup to prevent RAM OOM spikes on Apple Silicon / MPS
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+            except Exception:
+                pass
+
             return chunks
 
         except ImportError:
@@ -394,7 +417,7 @@ class MultimodalRAG:
     # Vector Indexing & Retrieval
     # ------------------------------------------------------------------
     def embed_and_store(self, chunks: list[DocumentChunk]) -> int:
-        """Computes text embeddings and saves the chunks inside Qdrant.
+        """Computes text embeddings, saves the chunks inside Qdrant, and extracts Knowledge Graph in Neo4j.
 
         Args:
             chunks: A list of DocumentChunk objects to save.
@@ -416,6 +439,13 @@ class MultimodalRAG:
 
             indexed_count = vectorstore.upsert(chunks, embeddings)
             logger.info("indexing_completed", indexed_count=indexed_count)
+
+            # Build Neo4j knowledge graph asynchronously or sequentially
+            try:
+                self._extract_and_store_graph(chunks)
+            except Exception as e:
+                logger.error("graph_extraction_failed_skipping", error=str(e))
+
             return indexed_count
         except (EmbeddingError, VectorStoreError) as e:
             logger.error("indexing_pipeline_failed", error=str(e))
@@ -464,7 +494,7 @@ class MultimodalRAG:
         return sorted(chunks, key=lambda x: x.score, reverse=True)
 
     def query(self, question: str, top_k: int = 5) -> list[RetrievedChunk]:
-        """Queries the vector index applying semantic search and hybrid re-ranking.
+        """Queries the vector index applying semantic search, graph context, and hybrid re-ranking.
 
         Args:
             question: Search query.
@@ -489,13 +519,26 @@ class MultimodalRAG:
             # 3. Vector Database retrieval
             retrieved = vectorstore.search(query_vector, limit=top_k * 2)
 
-            # 4. Keyword Boosting (Lexical Hybrid component)
-            boosted = self._apply_keyword_boost(expanded_query, retrieved)
+            # 4. Graph Context Retrieval
+            graph_chunks = self._retrieve_graph_context(expanded_query)
 
-            # 5. Optional Cross-Encoder Re-ranking
+            # 5. Merge and deduplicate candidates by chunk text similarity
+            seen_texts = set()
+            merged_chunks = []
+            
+            for chunk in retrieved + graph_chunks:
+                norm_text = chunk.text.strip().lower()
+                if norm_text not in seen_texts:
+                    seen_texts.add(norm_text)
+                    merged_chunks.append(chunk)
+
+            # 6. Keyword Boosting (Lexical Hybrid component)
+            boosted = self._apply_keyword_boost(expanded_query, merged_chunks)
+
+            # 7. Optional Cross-Encoder Re-ranking
             re_ranked = self._reranker.re_rank(expanded_query, boosted)
 
-            # 6. Clamp to top-K
+            # 8. Clamp to top-K
             return re_ranked[:top_k]
 
         except (EmbeddingError, VectorStoreError) as e:
@@ -504,6 +547,160 @@ class MultimodalRAG:
         except Exception as e:
             logger.error("unexpected_retrieval_failure", error=str(e))
             return []
+
+    def _extract_and_store_graph(self, chunks: list[DocumentChunk]) -> None:
+        """Extracts concept entities and relationships from chunks using Gemini or regex fallback, then stores them."""
+        graphstore = self._get_graph_store()
+        if not graphstore.is_ready:
+            return
+
+        llm = self._get_llm_provider()
+        # Check configuration
+        has_gemini = hasattr(llm, "is_configured") and getattr(llm, "is_configured")
+
+        logger.info("extracting_graph_entities_and_relations", chunks_count=len(chunks), use_gemini=has_gemini)
+
+        for chunk in chunks:
+            if not chunk.text or len(chunk.text.strip()) < 20:
+                continue
+
+            extracted = False
+            if has_gemini:
+                try:
+                    # Construct extraction query
+                    question_prompt = (
+                        "Extract key academic concepts (concepts, terms, theories, definitions) and their semantic relationships from the text.\n"
+                        "Format the output strictly as a JSON object (no markdown, no wrap blocks, no formatting other than pure JSON) with the following structure:\n"
+                        "{\n"
+                        "  \"entities\": [{\"name\": \"Concept Name\", \"type\": \"Concept\"}],\n"
+                        "  \"relations\": [{\"source\": \"Concept A\", \"target\": \"Concept B\", \"type\": \"DEFINES\"}]\n"
+                        "}\n"
+                        "Keep types simple (e.g. Concept, Definition, Term, Process). Keep relation types simple (e.g. DEFINES, PART_OF, PREREQUISITE_FOR, RELATED_TO)."
+                    )
+                    
+                    # Call LLM generate using the chunk as context
+                    llm_res = llm.generate(question_prompt, [RetrievedChunk(text=chunk.text, metadata={}, score=1.0)])
+                    
+                    # Parse JSON
+                    clean_res = re.sub(r"```json|```", "", llm_res).strip()
+                    data = json.loads(clean_res)
+                    
+                    entities = data.get("entities", [])
+                    relations = data.get("relations", [])
+                    
+                    source_file = chunk.metadata.get("source_file", "Unknown Document")
+                    
+                    for ent in entities:
+                        name = ent.get("name", "").strip()
+                        ent_type = ent.get("type", "Concept").strip()
+                        if name:
+                            graphstore.upsert_entity(name, ent_type, {
+                                "source_file": source_file,
+                                "chunk_id": chunk.chunk_id,
+                                "text": chunk.text[:200]
+                            })
+                            
+                    for rel in relations:
+                        src = rel.get("source", "").strip()
+                        tgt = rel.get("target", "").strip()
+                        r_type = rel.get("type", "RELATED_TO").strip()
+                        if src and tgt:
+                            graphstore.upsert_relationship(src, tgt, r_type, {
+                                "source_file": source_file,
+                                "chunk_id": chunk.chunk_id
+                            })
+                    
+                    extracted = True
+                except Exception as e:
+                    logger.warning("gemini_graph_extraction_failed_falling_back", error=str(e))
+            
+            if not extracted:
+                self._fallback_extract_and_store(chunk, graphstore)
+
+    def _fallback_extract_and_store(self, chunk: DocumentChunk, graphstore: GraphStore) -> None:
+        """Regex-based fallback entity/relationship extraction when Gemini is unavailable."""
+        text = chunk.text
+        # Find single/multi-word capitalized terms (potential concepts)
+        candidates = re.findall(r"\b[A-Z][a-zA-Z0-9_]{1,15}(?:\s+[A-Z][a-zA-Z0-9_]{1,15})*\b", text)
+        unique_candidates = list(set([c.strip() for c in candidates if len(c.strip()) > 3]))
+        
+        source_file = chunk.metadata.get("source_file", "Unknown Document")
+        
+        for entity in unique_candidates:
+            graphstore.upsert_entity(entity, "Concept", {
+                "source_file": source_file,
+                "chunk_id": chunk.chunk_id,
+                "text": chunk.text[:200]
+            })
+            # Associate to section header if available
+            section = chunk.metadata.get("section_header")
+            if section and section != "Untitled Section":
+                graphstore.upsert_entity(section, "Section", {"source_file": source_file})
+                graphstore.upsert_relationship(entity, section, "PART_OF", {
+                    "source_file": source_file,
+                    "chunk_id": chunk.chunk_id
+                })
+
+    def _retrieve_graph_context(self, question: str) -> list[RetrievedChunk]:
+        """Scans the query for known graph concepts and fetches their relations as supplementary chunks."""
+        graphstore = self._get_graph_store()
+        if not graphstore.is_ready:
+            return []
+
+        matched_entities = []
+        try:
+            # Check if Neo4j Server is active
+            if hasattr(graphstore, "_driver") and graphstore._driver is not None:
+                query_cypher = (
+                    "MATCH (c:Concept) "
+                    "WHERE toLower($question) CONTAINS toLower(c.name) "
+                    "RETURN c.name as name"
+                )
+                with graphstore._driver.session() as session:
+                    res = session.run(query_cypher, question=question)
+                    matched_entities = [record["name"] for record in res]
+            # Mock graph store fallback
+            elif hasattr(graphstore, "_nodes"):
+                matched_entities = [
+                    name for name in graphstore._nodes
+                    if name.lower() in question.lower()
+                ]
+        except Exception as e:
+            logger.warning("graph_entity_matching_failed", error=str(e))
+
+        if not matched_entities:
+            return []
+
+        logger.info("matched_graph_entities_for_query", count=len(matched_entities), entities=matched_entities)
+
+        graph_chunks = []
+        for entity in matched_entities:
+            neighbors = graphstore.query_neighborhood(entity)
+            for record in neighbors:
+                src = record["source"]
+                rel = record["relationship"]
+                tgt = record["target"]
+                
+                # Format relational context
+                relation_desc = f"Đồ thị tri thức (Knowledge Graph): Khái niệm '{src}' liên kết với '{tgt}' qua quan hệ '{rel}'."
+                
+                target_props = record.get("target_properties", {})
+                if target_props.get("text"):
+                    relation_desc += f" Chi tiết ngữ cảnh: {target_props['text']}"
+
+                source_file = target_props.get("source_file", "Knowledge Graph")
+
+                graph_chunks.append(RetrievedChunk(
+                    text=relation_desc,
+                    metadata={
+                        "source_file": source_file,
+                        "source_type": "🕸️ Đồ thị tri thức (Graph)",
+                        "page_number": 1,
+                        "section_header": f"Graph: {src} -> {tgt}"
+                    },
+                    score=0.85
+                ))
+        return graph_chunks
 
     def generate_answer(
         self,

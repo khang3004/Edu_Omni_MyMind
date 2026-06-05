@@ -1,6 +1,7 @@
 """Google Gemini LLM Provider.
 
 Synthesizes context-grounded answers utilizing the official Google Generative AI SDK.
+Supports dynamic API key rotation via KeyRotator.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from edumind.core.exceptions import LLMError
 from edumind.core.logging import get_logger
 from edumind.models.chunks import RetrievedChunk
 from edumind.services.llm.base import LLMProvider
+from edumind.utils.rotator import KeyRotator
 from edumind.utils.retry import retry_on_transient_error
 
 logger = get_logger(__name__)
@@ -17,39 +19,27 @@ logger = get_logger(__name__)
 class GeminiLLMProvider(LLMProvider):
     """Google Gemini model client implementing context-aware answer synthesis."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
+    def __init__(
+        self,
+        api_key: str = "",
+        model_name: str = "gemini-1.5-flash",
+        api_key_prefix: str = "GEMINI_API_KEY_",
+    ):
         """Initializes the Gemini provider.
 
         Args:
-            api_key: The Google API Key.
+            api_key: The fallback static Google API Key.
             model_name: The Gemini model variation (e.g. gemini-1.5-flash).
+            api_key_prefix: Tiền tố xoay vòng key.
         """
         self._api_key = api_key
         self._model_name = model_name
-        self._configured = False
-
-        self._configure()
-
-    def _configure(self) -> None:
-        """Configures the google-generativeai SDK."""
-        if not self._api_key:
-            logger.warning("gemini_api_key_missing_or_empty")
-            self._configured = False
-            return
-
-        try:
-            import google.generativeai as genai
-
-            genai.configure(api_key=self._api_key)
-            self._configured = True
-            logger.info("gemini_sdk_configured", model=self._model_name)
-        except Exception as e:
-            logger.error("gemini_configuration_failed", error=str(e))
-            self._configured = False
+        self._api_key_prefix = api_key_prefix
+        self._configured = True
 
     @property
     def is_configured(self) -> bool:
-        """True if the API key was successfully verified and configured."""
+        """True if configuration parameters are present."""
         return self._configured
 
     @retry_on_transient_error(max_attempts=3)
@@ -63,13 +53,21 @@ class GeminiLLMProvider(LLMProvider):
         Returns:
             The synthesized answer string.
         """
-        if not self.is_configured:
-            raise LLMError("Gemini LLM Provider is not configured or lacks API key.")
+        # Resolve rotating API key
+        key = KeyRotator.get_key(self._api_key_prefix)
+        if not key:
+            key = self._api_key
+
+        if not key:
+            raise LLMError("Gemini LLM Provider has no valid API key configured.")
 
         if not contexts:
             return "No relevant contexts available to generate an answer."
 
         import google.generativeai as genai
+
+        # Configure client dynamically for the current key
+        genai.configure(api_key=key)
 
         # Construct a grounded RAG prompt
         context_str = ""

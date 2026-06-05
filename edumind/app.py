@@ -29,6 +29,8 @@ import tempfile
 
 import streamlit as st
 
+from edumind.utils.data_manager import ensure_data_dirs, get_raw_dir, get_storage_stats
+
 # ----------------------------------------------------------------------
 # Page Configuration
 # ----------------------------------------------------------------------
@@ -396,6 +398,29 @@ def render_sidebar():
                 unsafe_allow_html=True,
             )
 
+        # Graph DB status
+        try:
+            from edumind.core.container import get_graph_store
+            gs = get_graph_store()
+            if gs.is_ready:
+                g_info = gs.graph_info()
+                n_count = g_info.get("nodes_count", 0)
+                e_count = g_info.get("edges_count", 0)
+                st.markdown(
+                    f'<span class="status-badge status-ready">🟢 Graph: {n_count} nodes, {e_count} edges</span>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<span class="status-badge status-mock">🟡 Graph Mock (RAM)</span>',
+                    unsafe_allow_html=True,
+                )
+        except Exception:
+            st.markdown(
+                '<span class="status-badge status-error">🔴 Graph Error</span>',
+                unsafe_allow_html=True,
+            )
+
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🔧 Configuration")
@@ -678,17 +703,28 @@ def render_tab_rag():
                 text=f"📄 Ingesting: {uploaded_file.name}...",
             )
 
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(uploaded_file.read())
-                tmp_path = tmp.name
+            # Save file to data/raw directory
+            dest_path = get_raw_dir() / uploaded_file.name
+            with open(dest_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
 
-            chunks = rag.ingest_pdf(tmp_path)
+            chunks = rag.ingest_pdf(dest_path)
 
             for chunk in chunks:
                 chunk.metadata["source_file"] = uploaded_file.name
 
             stored = rag.embed_and_store(chunks)
             total_chunks += stored
+
+            # Explicit memory cleanup to release model allocations from RAM/MPS
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+            except Exception:
+                pass
 
         progress_bar.progress(1.0, text="✅ Completed successfully!")
         st.success(f"✅ Indexed {total_chunks} text chunks from {len(uploaded_files)} files!")
@@ -827,10 +863,12 @@ def render_tab_pipeline():
         all_chunks = []
 
         if pdf_file is not None:
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(pdf_file.read())
-                tmp_path = tmp.name
-            pdf_chunks = rag.ingest_pdf(tmp_path)
+            # Save to raw
+            dest_pdf = get_raw_dir() / pdf_file.name
+            with open(dest_pdf, "wb") as f:
+                f.write(pdf_file.getbuffer())
+
+            pdf_chunks = rag.ingest_pdf(dest_pdf)
             for chunk in pdf_chunks:
                 chunk.metadata["source_type"] = "📄 Slide"
                 chunk.metadata["source_file"] = pdf_file.name
@@ -918,15 +956,19 @@ def render_tab_pipeline():
 # ----------------------------------------------------------------------
 def main():
     """Main execution point for the Streamlit dashboard."""
+    # Ensure data dirs are created
+    ensure_data_dirs()
+    
     inject_custom_css()
     render_sidebar()
 
-    # Main dashboard divided into 4 tabs
-    tab_asr, tab_trans, tab_rag, tab_pipeline = st.tabs([
+    # Main dashboard divided into 5 tabs
+    tab_asr, tab_trans, tab_rag, tab_pipeline, tab_graph = st.tabs([
         "🎙️ Bilingual Note-Taker",
         "🔄 VietMix Translation",
         "📚 Anti-Forget RAG",
         "🧠 ALL-IN-ONE Pipeline",
+        "🕸️ Knowledge Graph",
     ])
 
     with tab_asr:
@@ -940,6 +982,97 @@ def main():
 
     with tab_pipeline:
         render_tab_pipeline()
+
+    with tab_graph:
+        render_tab_graph()
+
+
+def render_tab_graph():
+    """Renders the Knowledge Graph exploration tab."""
+    st.markdown("## 🕸️ Knowledge Graph Explorer")
+    st.markdown(
+        "Explore academic concepts, terms, definitions, and their semantic relationships "
+        "extracted automatically from the ingested files into the Neo4j database."
+    )
+    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+
+    from edumind.core.container import get_graph_store
+    gs = get_graph_store()
+    
+    # Disk and stats
+    stats = get_storage_stats()
+    
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1.metric("Storage Mode", stats.get("qdrant_mode", "local").upper())
+    col_s2.metric("Raw Files Count", stats.get("raw_files_count", 0))
+    col_s3.metric("DB Disk Usage", f"{stats.get('qdrant_size_mb', 0.0) + stats.get('raw_size_mb', 0.0):.2f} MB")
+    
+    info = gs.graph_info()
+    col_s4.metric("Graph Mode", info.get("storage_mode", "Mock").replace("_", " ").title())
+
+    st.markdown("### 🔍 Query Concept Neighborhood")
+    search_concept = st.text_input(
+        "Search concept (case-sensitive, e.g., Attention, Machine Learning)",
+        key="graph_search_concept"
+    )
+    
+    if search_concept.strip():
+        neighbors = gs.query_neighborhood(search_concept)
+        if neighbors:
+            st.success(f"Matched '{search_concept}': found {len(neighbors)} relationships.")
+            for r in neighbors:
+                src = r["source"]
+                rel = r["relationship"]
+                tgt = r["target"]
+                tgt_type = r.get("target_type", "Concept")
+                st.markdown(
+                    f'<div class="result-card" style="border-left: 3px solid var(--accent-purple);">'
+                    f'Relation: **{src}** —[{rel}]→ **{tgt}** ({tgt_type})'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            st.warning(f"No connections found for concept '{search_concept}' in graph.")
+
+    st.markdown("### 🗺️ Full Graph Connections (Top 50)")
+    
+    # Retrieve top connections
+    connections = []
+    try:
+        if hasattr(gs, "_driver") and gs._driver is not None:
+            query_cypher = (
+                "MATCH (a:Concept)-[r]->(b:Concept) "
+                "RETURN a.name as source, type(r) as relationship, b.name as target "
+                "LIMIT 50"
+            )
+            with gs._driver.session() as session:
+                res = session.run(query_cypher)
+                connections = [
+                    {"Source": r["source"], "Relationship": r["relationship"], "Target": r["target"]}
+                    for r in res
+                ]
+        elif hasattr(gs, "_edges"):
+            connections = [
+                {"Source": e["source"], "Relationship": e["type"], "Target": e["target"]}
+                for e in gs._edges[:50]
+            ]
+    except Exception as e:
+        st.error(f"Error loading graph connections: {e}")
+
+    if connections:
+        st.dataframe(connections, use_container_width=True)
+    else:
+        st.info("💡 Graph is currently empty. Ingest some PDFs or run E2E Pipeline to build the graph.")
+
+    # Action buttons
+    col_act1, col_act2 = st.columns(2)
+    with col_act1:
+        if st.button("🗑️ Wipe Graph Store", key="btn_clear_graph", use_container_width=True):
+            if gs.clear_graph():
+                st.success("✅ Graph wiped successfully!")
+                st.rerun()
+            else:
+                st.error("❌ Failed to clear graph database.")
 
 
 if __name__ == "__main__":

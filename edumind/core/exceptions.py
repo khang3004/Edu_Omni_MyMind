@@ -45,6 +45,10 @@ class VectorStoreError(EduMINDError):
     """Raised when vector database operations fail."""
 
 
+class GraphStoreError(EduMINDError):
+    """Raised when graph database operations fail."""
+
+
 class TranscriptionError(EduMINDError):
     """Raised when speech-to-text transcription fails."""
 

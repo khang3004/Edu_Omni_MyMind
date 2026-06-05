@@ -5,9 +5,11 @@ from __future__ import annotations
 from edumind.services.llm.base import LLMProvider
 from edumind.services.llm.gemini import GeminiLLMProvider
 from edumind.services.llm.template import TemplateLLMProvider
+from edumind.services.llm.openai_like import OpenAILikeLLMProvider
 
 __all__ = [
     "LLMProvider",
     "GeminiLLMProvider",
     "TemplateLLMProvider",
+    "OpenAILikeLLMProvider",
 ]

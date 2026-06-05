@@ -66,6 +66,25 @@ class Settings(BaseSettings):
         validation_alias="QDRANT_COLLECTION_NAME",
     )
 
+    # --- Neo4j Config ---
+    NEO4J_URI: str = Field(default="bolt://localhost:7687", validation_alias="NEO4J_URI")
+    NEO4J_USER: str = Field(default="neo4j", validation_alias="NEO4J_USER")
+    NEO4J_PASSWORD: SecretStr = Field(default=SecretStr("omni_ips_password"), validation_alias="NEO4J_PASSWORD")
+
+    # --- ColPali Multimodal Embedding ---
+    ENABLE_COLPALI: bool = Field(default=False, validation_alias="ENABLE_COLPALI")
+    COLPALI_MODEL: str = Field(default="vidore/colpali-v1.2", validation_alias="COLPALI_MODEL")
+
+    # --- Model-Agnostic LLM & Embedding Config ---
+    LLM_PROVIDER: str = Field(default="google", validation_alias="LLM_PROVIDER")
+    LLM_MODEL: str = Field(default="gemma-4-31b-it", validation_alias="LLM_MODEL")
+    LLM_BASE_URL: str = Field(default="", validation_alias="LLM_BASE_URL")
+    LLM_API_KEY_PREFIX: str = Field(default="GEMINI_API_KEY_", validation_alias="LLM_API_KEY_PREFIX")
+
+    EMBEDDING_PROVIDER: str = Field(default="local", validation_alias="EMBEDDING_PROVIDER")
+    EMBEDDING_BASE_URL: str = Field(default="", validation_alias="EMBEDDING_BASE_URL")
+    EMBEDDING_API_KEY_PREFIX: str = Field(default="", validation_alias="EMBEDDING_API_KEY_PREFIX")
+
     # --- Google API ---
     GOOGLE_API_KEY: SecretStr = Field(default=SecretStr(""), validation_alias="GOOGLE_API_KEY")
 
@@ -125,8 +144,10 @@ class Settings(BaseSettings):
         return {
             "device": self.DEVICE,
             "whisper_model": self.WHISPER_MODEL,
+            "embedding_provider": self.EMBEDDING_PROVIDER,
             "embedding_model": self.EMBEDDING_MODEL,
+            "llm_provider": self.LLM_PROVIDER,
+            "llm_model": self.LLM_MODEL,
             "translation_model": self.TRANSLATION_MODEL,
             "qdrant_mode": self.QDRANT_MODE,
-            "has_google_api": bool(self.GOOGLE_API_KEY.get_secret_value()),
         }
