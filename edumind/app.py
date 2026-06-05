@@ -367,8 +367,9 @@ def render_sidebar():
             translator = load_translator_module()
             mode_label = "Model" if translator.is_model_loaded else "Rule-Based"
             badge_class = "status-ready" if translator.is_model_loaded else "status-mock"
+            emoji = "🟢" if translator.is_model_loaded else "🟡"
             st.markdown(
-                f'<span class="status-badge {badge_class}">🟡 Translator: {mode_label}</span>',
+                f'<span class="status-badge {badge_class}">{emoji} Translator: {mode_label}</span>',
                 unsafe_allow_html=True,
             )
         except Exception:
