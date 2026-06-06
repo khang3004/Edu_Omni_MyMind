@@ -83,7 +83,11 @@ class QdrantVectorStore(VectorStore):
             existing_names = [c.name for c in collections]
 
             if self._collection_name not in existing_names:
-                logger.info("creating_qdrant_collection", name=self._collection_name, dim=self._embedding_dim)
+                logger.info(
+                    "creating_qdrant_collection",
+                    name=self._collection_name,
+                    dim=self._embedding_dim,
+                )
                 self._client.create_collection(
                     collection_name=self._collection_name,
                     vectors_config=VectorParams(
@@ -129,15 +133,17 @@ class QdrantVectorStore(VectorStore):
         points = []
         for chunk, embedding in zip(chunks, embeddings):
             point_id = str(uuid.uuid4())
-            points.append(PointStruct(
-                id=point_id,
-                vector=embedding.tolist(),
-                payload={
-                    "text": chunk.text,
-                    "chunk_id": chunk.chunk_id,
-                    **chunk.metadata,
-                },
-            ))
+            points.append(
+                PointStruct(
+                    id=point_id,
+                    vector=embedding.tolist(),
+                    payload={
+                        "text": chunk.text,
+                        "chunk_id": chunk.chunk_id,
+                        **chunk.metadata,
+                    },
+                )
+            )
 
         try:
             self._client.upsert(
@@ -188,11 +194,13 @@ class QdrantVectorStore(VectorStore):
             for hit in results:
                 payload = hit.payload or {}
                 text = payload.pop("text", "")
-                retrieved.append(RetrievedChunk(
-                    text=text,
-                    metadata=payload,
-                    score=float(hit.score),
-                ))
+                retrieved.append(
+                    RetrievedChunk(
+                        text=text,
+                        metadata=payload,
+                        score=float(hit.score),
+                    )
+                )
 
             logger.debug("query_completed", found=len(retrieved))
             return retrieved
@@ -236,7 +244,9 @@ class QdrantVectorStore(VectorStore):
             return {
                 "status": "ready",
                 "collection_name": self._collection_name,
-                "vectors_count": getattr(info, "indexed_vectors_count", getattr(info, "vectors_count", 0)),
+                "vectors_count": getattr(
+                    info, "indexed_vectors_count", getattr(info, "vectors_count", 0)
+                ),
                 "points_count": info.points_count,
             }
         except Exception as e:

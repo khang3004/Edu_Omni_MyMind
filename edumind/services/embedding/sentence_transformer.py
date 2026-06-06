@@ -42,7 +42,9 @@ class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
             # Infer dimension
             test_emb = self._model.encode(["test"], show_progress_bar=False)
             self._dimension = int(test_emb.shape[1])
-            logger.info("loaded_embedding_model", model_name=self._model_name, dimension=self._dimension)
+            logger.info(
+                "loaded_embedding_model", model_name=self._model_name, dimension=self._dimension
+            )
         except Exception as e:
             logger.error("embedding_model_load_failed", model_name=self._model_name, error=str(e))
             raise EmbeddingError(

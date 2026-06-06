@@ -47,7 +47,9 @@ class ColPaliEmbeddingProvider(EmbeddingProvider):
                 device_map=self._device,
             )
             self._processor = AutoProcessor.from_pretrained(self._model_name)
-            logger.info("loaded_colpali_model", model_name=self._model_name, dimension=self._dimension)
+            logger.info(
+                "loaded_colpali_model", model_name=self._model_name, dimension=self._dimension
+            )
         except Exception as e:
             logger.warning("colpali_load_failed_falling_back_to_random", error=str(e))
             self._model = None
@@ -78,7 +80,7 @@ class ColPaliEmbeddingProvider(EmbeddingProvider):
             # Process text input
             inputs = self._processor(text=texts, return_tensors="pt").to(self._device)
             with torch.no_grad():
-                embeddings = self._model(**inputs) # shape: (batch, tokens, dim)
+                embeddings = self._model(**inputs)  # shape: (batch, tokens, dim)
                 # Pool token embeddings using mean pooling to form a single 1D vector per text
                 pooled = embeddings.mean(dim=1).cpu().float().numpy()
             return np.array(pooled, dtype=np.float32)
@@ -104,7 +106,7 @@ class ColPaliEmbeddingProvider(EmbeddingProvider):
             # Process image inputs
             inputs = self._processor(images=images, return_tensors="pt").to(self._device)
             with torch.no_grad():
-                embeddings = self._model(**inputs) # shape: (batch, patches, dim)
+                embeddings = self._model(**inputs)  # shape: (batch, patches, dim)
                 # Mean pool patch embeddings to create 1D image vector
                 pooled = embeddings.mean(dim=1).cpu().float().numpy()
             return np.array(pooled, dtype=np.float32)

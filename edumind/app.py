@@ -23,6 +23,7 @@ from __future__ import annotations
 # Suppress HuggingFace transformers verbose warnings (Streamlit file-watcher)
 try:
     import transformers
+
     transformers.utils.logging.set_verbosity_error()
 except ImportError:
     pass
@@ -50,7 +51,8 @@ st.set_page_config(
 # Shared Premium CSS (Dark Theme / Glassmorphism)
 # ──────────────────────────────────────────────────────────────────────────────
 def _inject_css() -> None:
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
@@ -147,7 +149,9 @@ def _inject_css() -> None:
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -157,18 +161,21 @@ def _inject_css() -> None:
 def _load_asr():
     from edumind.config import get_settings
     from edumind.modules.speech_processor import CodeSwitchedASR
+
     return CodeSwitchedASR(model_name=get_settings().WHISPER_MODEL)
 
 
 @st.cache_resource(show_spinner=False)
 def _load_translator():
     from edumind.modules.vietmix_translator import VietMixTranslator
+
     return VietMixTranslator()
 
 
 @st.cache_resource(show_spinner=False)
 def _load_rag():
     from edumind.modules.rag_engine import MultimodalRAG
+
     return MultimodalRAG()
 
 
@@ -186,6 +193,7 @@ def _render_sidebar() -> None:
 
         st.markdown("### ⚡ System Status")
         from edumind.config import get_settings
+
         settings = get_settings()
 
         # Device
@@ -200,8 +208,10 @@ def _render_sidebar() -> None:
         # ASR
         try:
             asr = _load_asr()
-            _badge("🟢 ASR Ready" if asr.is_ready else "🟡 ASR Mock",
-                   "status-ready" if asr.is_ready else "status-mock")
+            _badge(
+                "🟢 ASR Ready" if asr.is_ready else "🟡 ASR Mock",
+                "status-ready" if asr.is_ready else "status-mock",
+            )
         except Exception:
             _badge("🔴 ASR Error", "status-error")
 
@@ -230,6 +240,7 @@ def _render_sidebar() -> None:
         # Graph
         try:
             from edumind.core.container import get_graph_store
+
             gs = get_graph_store()
             g_info = gs.graph_info()
             if gs.is_ready:
@@ -256,10 +267,7 @@ def _render_sidebar() -> None:
         )
 
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
-        st.markdown(
-            "**EduMIND v2.0.0**\n\n"
-            "🏫 *HCMUS Underdogs Team*"
-        )
+        st.markdown("**EduMIND v2.0.0**\n\n🏫 *HCMUS Underdogs Team*")
 
 
 def _badge(label: str, css_class: str) -> None:
@@ -287,9 +295,9 @@ def _render_result_cards(results) -> None:
         st.markdown(
             f'<div class="result-card">'
             f'<span class="score">#{i} {type_label}Relevance: {res.score:.4f}</span><br>'
-            f'{res.text[:400]}{"..." if len(res.text) > 400 else ""}<br>'
+            f"{res.text[:400]}{'...' if len(res.text) > 400 else ''}<br>"
             f'<span class="citation">📄 Page {page} | {source}{section_label}</span>'
-            f'</div>',
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -307,7 +315,7 @@ def _render_cmi_gauge(score: float) -> None:
     st.markdown(
         f'<div class="cmi-bar-container">'
         f'<div class="cmi-bar-fill" style="width:{fill}%;background:{colour};">'
-        f'{score:.2f}</div></div>',
+        f"{score:.2f}</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -335,19 +343,24 @@ def _tab_asr() -> None:
     col_real, col_mock = st.columns(2)
     with col_real:
         run_btn = st.button(
-            "🎤 Transcribe Audio", key="btn_transcribe",
-            use_container_width=True, type="primary",
+            "🎤 Transcribe Audio",
+            key="btn_transcribe",
+            use_container_width=True,
+            type="primary",
             disabled=audio_file is None,
         )
     with col_mock:
         mock_btn = st.button(
-            "🎭 Demo (Mock Data)", key="btn_mock_asr",
+            "🎭 Demo (Mock Data)",
+            key="btn_mock_asr",
             use_container_width=True,
         )
 
     if run_btn and audio_file:
         with st.spinner("Transcribing with Whisper..."):
-            with tempfile.NamedTemporaryFile(suffix=Path(audio_file.name).suffix, delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(
+                suffix=Path(audio_file.name).suffix, delete=False
+            ) as tmp:
                 tmp.write(audio_file.read())
                 tmp_path = tmp.name
             result = asr.transcribe(tmp_path)
@@ -378,7 +391,7 @@ def _display_transcript(asr, result) -> None:
         st.markdown("#### ✅ Corrected Transcript")
         st.markdown(
             f'<div class="glass-card" style="border-left:3px solid var(--accent-green);">'
-            f'{corrected}</div>',
+            f"{corrected}</div>",
             unsafe_allow_html=True,
         )
 
@@ -468,7 +481,7 @@ def _tab_translation() -> None:
         en_result = translator.translate_to_english(input_text)
         st.markdown(
             f'<div class="glass-card" style="border-left:3px solid var(--accent-orange);">'
-            f'{en_result}</div>',
+            f"{en_result}</div>",
             unsafe_allow_html=True,
         )
 
@@ -476,8 +489,7 @@ def _tab_translation() -> None:
         st.markdown("#### 🇻🇳 → Vietnamese")
         vi_result = translator.translate_to_vietnamese(input_text)
         st.markdown(
-            f'<div class="glass-card" style="border-left:3px solid #3B82F6;">'
-            f'{vi_result}</div>',
+            f'<div class="glass-card" style="border-left:3px solid #3B82F6;">{vi_result}</div>',
             unsafe_allow_html=True,
         )
 
@@ -558,6 +570,7 @@ def _tab_knowledge_base() -> None:
                 gc.collect()
                 try:
                     import torch
+
                     if torch.backends.mps.is_available():
                         torch.mps.empty_cache()
                 except Exception:
@@ -600,7 +613,7 @@ def _tab_knowledge_base() -> None:
                 st.markdown("#### 📋 Synthesized Answer")
                 st.markdown(
                     f'<div class="glass-card" style="border-left:3px solid var(--accent-green);">'
-                    f'{answer}</div>',
+                    f"{answer}</div>",
                     unsafe_allow_html=True,
                 )
                 st.markdown("#### 📄 Source Chunks")
@@ -621,13 +634,16 @@ def _tab_graph() -> None:
     _divider()
 
     from edumind.core.container import get_graph_store
+
     gs = get_graph_store()
 
     stats = get_storage_stats()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Storage Mode", stats.get("qdrant_mode", "local").upper())
     c2.metric("Raw Files", stats.get("raw_files_count", 0))
-    c3.metric("DB Size", f"{stats.get('qdrant_size_mb', 0.0) + stats.get('raw_size_mb', 0.0):.2f} MB")
+    c3.metric(
+        "DB Size", f"{stats.get('qdrant_size_mb', 0.0) + stats.get('raw_size_mb', 0.0):.2f} MB"
+    )
     info = gs.graph_info()
     c4.metric("Graph Mode", info.get("storage_mode", "Mock").replace("_", " ").title())
 
@@ -646,9 +662,9 @@ def _tab_graph() -> None:
             for r in neighbors:
                 st.markdown(
                     f'<div class="result-card" style="border-left:3px solid var(--accent-purple);">'
-                    f'<b>{r["source"]}</b> —[{r["relationship"]}]→ <b>{r["target"]}</b> '
-                    f'({r.get("target_type", "Concept")})'
-                    f'</div>',
+                    f"<b>{r['source']}</b> —[{r['relationship']}]→ <b>{r['target']}</b> "
+                    f"({r.get('target_type', 'Concept')})"
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
         else:
@@ -666,7 +682,11 @@ def _tab_graph() -> None:
             )
             with gs._driver.session() as session:
                 connections = [
-                    {"Source": r["source"], "Relationship": r["relationship"], "Target": r["target"]}
+                    {
+                        "Source": r["source"],
+                        "Relationship": r["relationship"],
+                        "Target": r["target"],
+                    }
                     for r in session.run(cypher)
                 ]
         elif hasattr(gs, "_edges"):
@@ -699,12 +719,14 @@ def main() -> None:
     _inject_css()
     _render_sidebar()
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🎙️ Speech-to-Text",
-        "🔄 VietMix Translator",
-        "📚 Knowledge Base",
-        "🕸️ Knowledge Graph",
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "🎙️ Speech-to-Text",
+            "🔄 VietMix Translator",
+            "📚 Knowledge Base",
+            "🕸️ Knowledge Graph",
+        ]
+    )
 
     with tab1:
         _tab_asr()

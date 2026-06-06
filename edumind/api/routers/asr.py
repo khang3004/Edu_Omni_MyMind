@@ -32,8 +32,7 @@ def _build_transcribe_response(asr: CodeSwitchedASR, result) -> TranscribeRespon
     corrections = asr.get_corrections(raw_text, corrected_text)
 
     segments = [
-        TranscriptSegmentDTO(start=seg.start, end=seg.end, text=seg.text)
-        for seg in result.segments
+        TranscriptSegmentDTO(start=seg.start, end=seg.end, text=seg.text) for seg in result.segments
     ]
 
     return TranscribeResponse(

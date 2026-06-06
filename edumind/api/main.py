@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Pre-warm lightweight singletons (translator is fast; ASR/RAG are lazy)
     try:
         from edumind.api.dependencies import get_translator
+
         _ = get_translator()
         logger.info("translator_pre_warmed")
     except Exception as exc:
@@ -99,10 +100,10 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     # All domain routes are versioned under /api/v1/
-    app.include_router(asr.router,         prefix=_API_PREFIX)
+    app.include_router(asr.router, prefix=_API_PREFIX)
     app.include_router(translation.router, prefix=_API_PREFIX)
-    app.include_router(rag.router,         prefix=_API_PREFIX)
-    app.include_router(pipeline.router,    prefix=_API_PREFIX)
+    app.include_router(rag.router, prefix=_API_PREFIX)
+    app.include_router(pipeline.router, prefix=_API_PREFIX)
 
     return app
 

@@ -91,7 +91,9 @@ class GeminiLLMProvider(LLMProvider):
         )
 
         try:
-            logger.info("requesting_gemini_generation", model=self._model_name, chunks_count=len(contexts))
+            logger.info(
+                "requesting_gemini_generation", model=self._model_name, chunks_count=len(contexts)
+            )
             model = genai.GenerativeModel(self._model_name)
             response = model.generate_content(prompt)
             text_result = response.text.strip()

@@ -23,6 +23,7 @@ PROJ_ROOT = Path(__file__).resolve().parents[2]
 # Load environment variables from .env file into os.environ
 try:
     from dotenv import load_dotenv
+
     load_dotenv(dotenv_path=PROJ_ROOT / ".env")
 except ImportError:
     pass
@@ -69,7 +70,9 @@ class Settings(BaseSettings):
     # --- Neo4j Config ---
     NEO4J_URI: str = Field(default="bolt://localhost:7687", validation_alias="NEO4J_URI")
     NEO4J_USER: str = Field(default="neo4j", validation_alias="NEO4J_USER")
-    NEO4J_PASSWORD: SecretStr = Field(default=SecretStr("omni_ips_password"), validation_alias="NEO4J_PASSWORD")
+    NEO4J_PASSWORD: SecretStr = Field(
+        default=SecretStr("omni_ips_password"), validation_alias="NEO4J_PASSWORD"
+    )
 
     # --- ColPali Multimodal Embedding ---
     ENABLE_COLPALI: bool = Field(default=False, validation_alias="ENABLE_COLPALI")
@@ -79,7 +82,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = Field(default="google", validation_alias="LLM_PROVIDER")
     LLM_MODEL: str = Field(default="gemma-4-31b-it", validation_alias="LLM_MODEL")
     LLM_BASE_URL: str = Field(default="", validation_alias="LLM_BASE_URL")
-    LLM_API_KEY_PREFIX: str = Field(default="GEMINI_API_KEY_", validation_alias="LLM_API_KEY_PREFIX")
+    LLM_API_KEY_PREFIX: str = Field(
+        default="GEMINI_API_KEY_", validation_alias="LLM_API_KEY_PREFIX"
+    )
 
     EMBEDDING_PROVIDER: str = Field(default="local", validation_alias="EMBEDDING_PROVIDER")
     EMBEDDING_BASE_URL: str = Field(default="", validation_alias="EMBEDDING_BASE_URL")
@@ -114,6 +119,7 @@ class Settings(BaseSettings):
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 return "cuda"
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():

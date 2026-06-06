@@ -47,7 +47,13 @@ _overrides: dict[str, Any] = {}
 
 def reset_container() -> None:
     """Wipes the container cache and clears all testing overrides."""
-    global _embedding_provider, _vectorstore, _llm_provider, _translation_provider, _graph_store, _colpali_provider
+    global \
+        _embedding_provider, \
+        _vectorstore, \
+        _llm_provider, \
+        _translation_provider, \
+        _graph_store, \
+        _colpali_provider
     with _lock:
         _embedding_provider = None
         _vectorstore = None
@@ -101,7 +107,9 @@ def get_embedding_provider() -> EmbeddingProvider:
                     logger.warning("sentence_transformer_failed_using_mock_fallback", error=str(e))
                     _embedding_provider = MockEmbeddingProvider()
             else:
-                logger.info("using_openai_like_embedding_provider", provider=provider, model=model_name)
+                logger.info(
+                    "using_openai_like_embedding_provider", provider=provider, model=model_name
+                )
                 try:
                     _embedding_provider = OpenAILikeEmbeddingProvider(
                         model_name=model_name,
@@ -109,7 +117,9 @@ def get_embedding_provider() -> EmbeddingProvider:
                         base_url=settings.EMBEDDING_BASE_URL,
                     )
                 except Exception as e:
-                    logger.warning("openai_like_embedding_provider_failed_using_mock_fallback", error=str(e))
+                    logger.warning(
+                        "openai_like_embedding_provider_failed_using_mock_fallback", error=str(e)
+                    )
                     _embedding_provider = MockEmbeddingProvider()
 
         return _embedding_provider
@@ -175,7 +185,9 @@ def get_llm_provider() -> LLMProvider:
                         api_key_prefix=settings.LLM_API_KEY_PREFIX,
                     )
             else:
-                logger.info("using_openai_like_llm_provider", provider=provider, model=settings.LLM_MODEL)
+                logger.info(
+                    "using_openai_like_llm_provider", provider=provider, model=settings.LLM_MODEL
+                )
                 _llm_provider = OpenAILikeLLMProvider(
                     model_name=settings.LLM_MODEL,
                     api_key_prefix=settings.LLM_API_KEY_PREFIX,
@@ -249,5 +261,3 @@ def get_colpali_provider() -> ColPaliEmbeddingProvider:
                 device=settings.DEVICE,
             )
         return _colpali_provider
-
-

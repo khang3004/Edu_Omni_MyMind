@@ -52,7 +52,9 @@ class TranslateResponse(BaseModel):
     """Response body for translation results."""
 
     result: str = Field(..., description="Translated output text")
-    mode: str = Field(default="rule-based", description="Translation mode ('model' or 'rule-based')")
+    mode: str = Field(
+        default="rule-based", description="Translation mode ('model' or 'rule-based')"
+    )
 
 
 class TokenLabelDTO(BaseModel):
@@ -134,7 +136,9 @@ class RAGQueryRequest(BaseModel):
 
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=5, ge=1, le=50)
-    generate_answer: bool = Field(default=True, description="If True, also generate a synthesized answer via LLM")
+    generate_answer: bool = Field(
+        default=True, description="If True, also generate a synthesized answer via LLM"
+    )
 
 
 class RetrievedChunkDTO(BaseModel):
@@ -149,7 +153,9 @@ class RAGQueryResponse(BaseModel):
     """Response body for RAG semantic search."""
 
     query: str
-    answer: str = Field(default="", description="LLM-synthesized answer (empty if generate_answer=False)")
+    answer: str = Field(
+        default="", description="LLM-synthesized answer (empty if generate_answer=False)"
+    )
     results: list[RetrievedChunkDTO]
 
 

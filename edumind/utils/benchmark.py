@@ -58,7 +58,7 @@ def run_benchmark() -> None:
         "Explain giúp t về loss fn và lr trong deep learning model này với mn",
         "Set bs và epoch thế nào cho BERT và transformer model nói chung?",
         "Mn nhớ submit bài trc dl nhé, ko là ăn con ngỗng",
-        "attn và backprop là hai phần rất quan trọng trong NLP và DL"
+        "attn và backprop là hai phần rất quan trọng trong NLP và DL",
     ]
 
     asr_times = []
@@ -83,7 +83,7 @@ def run_benchmark() -> None:
         "Các bạn cần submit bài trước deadline nhé không là bị trừ điểm",
         "Cái learning rate nên set khoảng 2e-5 cho fine-tuning BERT",
         "Mọi người nhớ review lại backpropagation và gradient descent trước buổi sau",
-        "Đầu tiên mình giải thích về activation function trong neural network"
+        "Đầu tiên mình giải thích về activation function trong neural network",
     ]
 
     cmi_times = []
@@ -126,7 +126,10 @@ def run_benchmark() -> None:
 
     # Create mock chunks to benchmark search
     mock_chunks = [
-        DocumentChunk(text=f"This is document chunk number {i} talking about deep learning and attention mechanism in transformers.", metadata={"source": "test"})
+        DocumentChunk(
+            text=f"This is document chunk number {i} talking about deep learning and attention mechanism in transformers.",
+            metadata={"source": "test"},
+        )
         for i in range(20)
     ]
 

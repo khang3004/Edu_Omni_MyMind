@@ -161,8 +161,7 @@ def query_rag(
         answer = rag.generate_answer(body.query, results)
 
     result_dtos = [
-        RetrievedChunkDTO(text=r.text, score=r.score, metadata=r.metadata)
-        for r in results
+        RetrievedChunkDTO(text=r.text, score=r.score, metadata=r.metadata) for r in results
     ]
 
     return RAGQueryResponse(

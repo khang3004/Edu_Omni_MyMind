@@ -36,7 +36,9 @@ def is_section_header(line: str) -> bool:
         return True
 
     # Numbered index patterns (e.g., "1. Introduction", "2.1 Background", "Chapter 3")
-    if re.match(r"^\d+(\.\d+)*\.?\s", line) or re.match(r"^(Chapter|Chương|Bài|Phần)\s", line, re.IGNORECASE):
+    if re.match(r"^\d+(\.\d+)*\.?\s", line) or re.match(
+        r"^(Chapter|Chương|Bài|Phần)\s", line, re.IGNORECASE
+    ):
         return True
 
     return False

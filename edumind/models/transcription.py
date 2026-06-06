@@ -25,7 +25,9 @@ class TranscriptSegment(BaseModel):
     def validate_timestamps(self) -> TranscriptSegment:
         """Validates that start time is before or equal to end time."""
         if self.start > self.end:
-            raise ValueError(f"Start time ({self.start}) must be less than or equal to end time ({self.end})")
+            raise ValueError(
+                f"Start time ({self.start}) must be less than or equal to end time ({self.end})"
+            )
         return self
 
 
@@ -40,6 +42,8 @@ class TranscriptResult(BaseModel):
     """
 
     text: str = Field(..., description="Unified full text transcription")
-    segments: list[TranscriptSegment] = Field(default_factory=list, description="Chronological segments list")
+    segments: list[TranscriptSegment] = Field(
+        default_factory=list, description="Chronological segments list"
+    )
     language: str = Field(default="vi", description="Detected language code")
     is_mock: bool = Field(default=False, description="Flag indicating if mock/simulation was used")

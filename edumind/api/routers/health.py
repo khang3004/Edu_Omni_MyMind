@@ -41,51 +41,63 @@ def health_detail() -> DetailedHealthResponse:
     # ── ASR ──────────────────────────────────────────────────────────────────
     try:
         from edumind.api.dependencies import get_asr
+
         asr = get_asr()
-        services.append(ServiceStatus(
-            name="asr",
-            ready=asr.is_ready,
-            detail=f"model={settings.WHISPER_MODEL}",
-        ))
+        services.append(
+            ServiceStatus(
+                name="asr",
+                ready=asr.is_ready,
+                detail=f"model={settings.WHISPER_MODEL}",
+            )
+        )
     except Exception as exc:
         services.append(ServiceStatus(name="asr", ready=False, detail=str(exc)))
 
     # ── Translator ───────────────────────────────────────────────────────────
     try:
         from edumind.api.dependencies import get_translator
+
         translator = get_translator()
-        services.append(ServiceStatus(
-            name="translator",
-            ready=True,
-            detail=f"mode={translator.mode}",
-        ))
+        services.append(
+            ServiceStatus(
+                name="translator",
+                ready=True,
+                detail=f"mode={translator.mode}",
+            )
+        )
     except Exception as exc:
         services.append(ServiceStatus(name="translator", ready=False, detail=str(exc)))
 
     # ── RAG / Vector Store ───────────────────────────────────────────────────
     try:
         from edumind.api.dependencies import get_rag
+
         rag = get_rag()
         info = rag.get_collection_info()
         pts = info.get("points_count", 0) or 0
-        services.append(ServiceStatus(
-            name="rag",
-            ready=rag.is_ready,
-            detail=f"collection={info.get('collection_name', '?')}, chunks={pts}",
-        ))
+        services.append(
+            ServiceStatus(
+                name="rag",
+                ready=rag.is_ready,
+                detail=f"collection={info.get('collection_name', '?')}, chunks={pts}",
+            )
+        )
     except Exception as exc:
         services.append(ServiceStatus(name="rag", ready=False, detail=str(exc)))
 
     # ── Graph Store ──────────────────────────────────────────────────────────
     try:
         from edumind.core.container import get_graph_store
+
         gs = get_graph_store()
         g_info = gs.graph_info()
-        services.append(ServiceStatus(
-            name="graph",
-            ready=gs.is_ready,
-            detail=f"mode={g_info.get('storage_mode', '?')}",
-        ))
+        services.append(
+            ServiceStatus(
+                name="graph",
+                ready=gs.is_ready,
+                detail=f"mode={g_info.get('storage_mode', '?')}",
+            )
+        )
     except Exception as exc:
         services.append(ServiceStatus(name="graph", ready=False, detail=str(exc)))
 

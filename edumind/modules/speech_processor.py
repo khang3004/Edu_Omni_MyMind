@@ -46,7 +46,9 @@ class CodeSwitchedASR:
         self.dynamic_teencode_path = settings.DATA_DIR / "processed" / "dynamic_teencode.json"
 
         # Load teencode mapping from configuration if not explicitly provided
-        self.teencode_map = teencode_map if teencode_map is not None else dict(settings.TEENCODE_MAP)
+        self.teencode_map = (
+            teencode_map if teencode_map is not None else dict(settings.TEENCODE_MAP)
+        )
 
         if teencode_map is None:
             self._load_dynamic_teencode()
@@ -126,7 +128,9 @@ class CodeSwitchedASR:
             detected_lang = result.get("language", "vi")
             full_text = result.get("text", "").strip()
 
-            logger.info("transcription_completed", language=detected_lang, segments_count=len(segments))
+            logger.info(
+                "transcription_completed", language=detected_lang, segments_count=len(segments)
+            )
 
             return TranscriptResult(
                 text=full_text,
@@ -197,11 +201,13 @@ class CodeSwitchedASR:
         max_len = max(len(orig_words), len(corr_words))
         for i in range(min(len(orig_words), max_len)):
             if i < len(corr_words) and orig_words[i].lower() != corr_words[i].lower():
-                changes.append({
-                    "original": orig_words[i],
-                    "corrected": corr_words[i] if i < len(corr_words) else "",
-                    "position": i,
-                })
+                changes.append(
+                    {
+                        "original": orig_words[i],
+                        "corrected": corr_words[i] if i < len(corr_words) else "",
+                        "position": i,
+                    }
+                )
 
         return changes
 
@@ -309,7 +315,9 @@ class CodeSwitchedASR:
                 self.dynamic_teencode_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.dynamic_teencode_path, "w", encoding="utf-8") as f:
                     json.dump(dyn_map, f, ensure_ascii=False, indent=4)
-                logger.info("dynamic_teencode_map_updated", original=orig_clean, corrected=corr_clean)
+                logger.info(
+                    "dynamic_teencode_map_updated", original=orig_clean, corrected=corr_clean
+                )
             except Exception as e:
                 logger.error("failed_to_write_dynamic_teencode", error=str(e))
 

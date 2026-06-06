@@ -105,16 +105,14 @@ class Neo4jGraphStore(GraphStore):
         if not sanitized_type:
             sanitized_type = "Concept"
 
-        query = (
-            f"MERGE (c:Concept {{name: $name}}) "
-            f"SET c:{sanitized_type} "
-            f"SET c += $properties"
-        )
+        query = f"MERGE (c:Concept {{name: $name}}) SET c:{sanitized_type} SET c += $properties"
 
         try:
             with self._driver.session() as session:
                 session.run(query, name=normalized_name, properties=props)
-                logger.debug("neo4j_upsert_entity_completed", name=normalized_name, type=entity_type)
+                logger.debug(
+                    "neo4j_upsert_entity_completed", name=normalized_name, type=entity_type
+                )
         except Exception as e:
             logger.error("neo4j_upsert_entity_failed", name=normalized_name, error=str(e))
             raise GraphStoreError(
@@ -132,7 +130,9 @@ class Neo4jGraphStore(GraphStore):
     ) -> None:
         """Links two concepts with a directed relationship, creating missing nodes if necessary."""
         if not self.is_ready:
-            logger.debug("neo4j_not_ready_skipping_upsert_relationship", source=source, target=target)
+            logger.debug(
+                "neo4j_not_ready_skipping_upsert_relationship", source=source, target=target
+            )
             return
 
         src = source.strip()
@@ -146,10 +146,7 @@ class Neo4jGraphStore(GraphStore):
             sanitized_rel = "RELATED_TO"
 
         # Create nodes if missing first to avoid Match failures
-        query_nodes = (
-            "MERGE (a:Concept {name: $source}) "
-            "MERGE (b:Concept {name: $target})"
-        )
+        query_nodes = "MERGE (a:Concept {name: $source}) MERGE (b:Concept {name: $target})"
 
         query_rel = (
             "MATCH (a:Concept {name: $source}), (b:Concept {name: $target}) "
@@ -161,7 +158,9 @@ class Neo4jGraphStore(GraphStore):
             with self._driver.session() as session:
                 session.run(query_nodes, source=src, target=tgt)
                 session.run(query_rel, source=src, target=tgt, properties=props)
-                logger.debug("neo4j_upsert_relationship_completed", source=src, target=tgt, type=rel_type)
+                logger.debug(
+                    "neo4j_upsert_relationship_completed", source=src, target=tgt, type=rel_type
+                )
         except Exception as e:
             logger.error("neo4j_upsert_relationship_failed", source=src, target=tgt, error=str(e))
             raise GraphStoreError(
@@ -188,14 +187,18 @@ class Neo4jGraphStore(GraphStore):
                 result = session.run(query, name=name)
                 records = []
                 for record in result:
-                    records.append({
-                        "source": record["source"],
-                        "relationship": record["relationship"],
-                        "target": record["target"],
-                        "target_type": record["target_properties"].get("entity_type", "Concept"),
-                        "target_properties": record["target_properties"],
-                        "relationship_properties": record["relationship_properties"],
-                    })
+                    records.append(
+                        {
+                            "source": record["source"],
+                            "relationship": record["relationship"],
+                            "target": record["target"],
+                            "target_type": record["target_properties"].get(
+                                "entity_type", "Concept"
+                            ),
+                            "target_properties": record["target_properties"],
+                            "relationship_properties": record["relationship_properties"],
+                        }
+                    )
                 return records
         except Exception as e:
             logger.error("neo4j_query_neighborhood_failed", name=name, error=str(e))

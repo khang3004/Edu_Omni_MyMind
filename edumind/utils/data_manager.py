@@ -89,7 +89,9 @@ def get_storage_stats() -> dict[str, any]:
     # Count raw files
     raw_files_count = 0
     if raw_dir.exists():
-        raw_files_count = len([f for f in raw_dir.iterdir() if f.is_file() and not f.name.startswith(".")])
+        raw_files_count = len(
+            [f for f in raw_dir.iterdir() if f.is_file() and not f.name.startswith(".")]
+        )
 
     # Compute sizes in MB
     raw_size_mb = round(_get_dir_size(raw_dir) / (1024 * 1024), 2)

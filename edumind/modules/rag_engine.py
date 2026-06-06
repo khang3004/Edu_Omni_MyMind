@@ -43,6 +43,7 @@ class CrossEncoderReRanker:
         # Instantiate a Time-To-Live (TTL) cache to bypass scoring repetitive queries/contexts
         try:
             from cachetools import TTLCache
+
             self._cache = TTLCache(maxsize=256, ttl=300)
         except ImportError:
             self._cache = {}
@@ -66,7 +67,9 @@ class CrossEncoderReRanker:
             )
             self._model = None
 
-    def re_rank(self, query: str, chunks: list[RetrievedChunk], max_candidates: int = 10) -> list[RetrievedChunk]:
+    def re_rank(
+        self, query: str, chunks: list[RetrievedChunk], max_candidates: int = 10
+    ) -> list[RetrievedChunk]:
         """Re-scores retrieved passages relative to the query.
 
         Args:
@@ -152,9 +155,7 @@ class MultimodalRAG:
 
         # Setup cross-encoder re-ranker
         self._reranker = (
-            CrossEncoderReRanker(rerank_model_name)
-            if rerank_model_name
-            else CrossEncoderReRanker()
+            CrossEncoderReRanker(rerank_model_name) if rerank_model_name else CrossEncoderReRanker()
         )
         self._doc_converter = None
 
@@ -162,6 +163,7 @@ class MultimodalRAG:
         """Retrieves the active embedding provider, resolving from container if needed."""
         if self._embedding_provider is None:
             from edumind.core.container import get_embedding_provider
+
             self._embedding_provider = get_embedding_provider()
         return self._embedding_provider
 
@@ -169,6 +171,7 @@ class MultimodalRAG:
         """Retrieves the active vector store, resolving from container if needed."""
         if self._vectorstore is None:
             from edumind.core.container import get_vectorstore
+
             self._vectorstore = get_vectorstore()
         return self._vectorstore
 
@@ -176,6 +179,7 @@ class MultimodalRAG:
         """Retrieves the active LLM provider, resolving from container if needed."""
         if self._llm_provider is None:
             from edumind.core.container import get_llm_provider
+
             self._llm_provider = get_llm_provider()
         return self._llm_provider
 
@@ -183,6 +187,7 @@ class MultimodalRAG:
         """Retrieves the active graph store, resolving from container if needed."""
         if self._graph_store is None:
             from edumind.core.container import get_graph_store
+
             self._graph_store = get_graph_store()
         return self._graph_store
 
@@ -219,13 +224,14 @@ class MultimodalRAG:
             logger.info("routing_audio_file_to_asr_pipeline", file_name=file_path.name)
             try:
                 from edumind.modules.speech_processor import CodeSwitchedASR
+
                 asr = CodeSwitchedASR()
                 transcript = asr.transcribe(file_path)
                 corrected_text = asr.post_process(transcript.text)
                 return self.ingest_text(
                     text=corrected_text,
                     source_name=file_path.name,
-                    metadata_extra={"source_type": "🎙️ Transcript"}
+                    metadata_extra={"source_type": "🎙️ Transcript"},
                 )
             except Exception as e:
                 logger.error("audio_routing_failed", file_name=file_path.name, error=str(e))
@@ -236,6 +242,7 @@ class MultimodalRAG:
         try:
             if self._doc_converter is None:
                 from docling.document_converter import DocumentConverter
+
                 self._doc_converter = DocumentConverter()
 
             result = self._doc_converter.convert(str(file_path))
@@ -256,30 +263,40 @@ class MultimodalRAG:
                 if hasattr(item, "prov") and item.prov:
                     page_num = item.prov[0].page_no
 
-                if "heading" in label_val.lower() or "header" in label_val.lower() or "title" in label_val.lower():
+                if (
+                    "heading" in label_val.lower()
+                    or "header" in label_val.lower()
+                    or "title" in label_val.lower()
+                ):
                     current_section = text_content.strip()
 
                 # Split long elements cleanly
                 for sub_text in split_long_text(text_content, max_size=500, overlap=50):
-                    chunks.append(DocumentChunk(
-                        text=sub_text,
-                        metadata={
-                            "page_number": page_num,
-                            "source_file": file_path.name,
-                            "section_header": current_section,
-                            "chunk_index": idx,
-                            "type": label_val,
-                            "source_type": f"📄 {suffix[1:].upper()} Document"
-                        },
-                    ))
+                    chunks.append(
+                        DocumentChunk(
+                            text=sub_text,
+                            metadata={
+                                "page_number": page_num,
+                                "source_file": file_path.name,
+                                "section_header": current_section,
+                                "chunk_index": idx,
+                                "type": label_val,
+                                "source_type": f"📄 {suffix[1:].upper()} Document",
+                            },
+                        )
+                    )
 
-            logger.info("docling_ingestion_completed", file_name=file_path.name, chunks_count=len(chunks))
+            logger.info(
+                "docling_ingestion_completed", file_name=file_path.name, chunks_count=len(chunks)
+            )
 
             # Explicit memory cleanup to prevent RAM OOM spikes on Apple Silicon / MPS
             import gc
+
             gc.collect()
             try:
                 import torch
+
                 if torch.backends.mps.is_available():
                     torch.mps.empty_cache()
             except Exception:
@@ -288,7 +305,9 @@ class MultimodalRAG:
             return chunks
 
         except ImportError:
-            logger.error("docling_library_missing_falling_back_to_txt", reason="docling is not installed")
+            logger.error(
+                "docling_library_missing_falling_back_to_txt", reason="docling is not installed"
+            )
             # Graceful local fallback to plain text parsing if docling is missing
             try:
                 with open(file_path, encoding="utf-8", errors="ignore") as f:
@@ -379,16 +398,18 @@ class MultimodalRAG:
 
             if para_text:
                 for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
-                    chunks.append(DocumentChunk(
-                        text=sub_chunk,
-                        metadata={
-                            "page_number": page_number,
-                            "source_file": source_file,
-                            "section_header": section,
-                            "chunk_index": chunk_idx,
-                            "type": "paragraph",
-                        },
-                    ))
+                    chunks.append(
+                        DocumentChunk(
+                            text=sub_chunk,
+                            metadata={
+                                "page_number": page_number,
+                                "source_file": source_file,
+                                "section_header": section,
+                                "chunk_index": chunk_idx,
+                                "type": "paragraph",
+                            },
+                        )
+                    )
                     chunk_idx += 1
             return chunk_idx
 
@@ -476,7 +497,9 @@ class MultimodalRAG:
             logger.info("query_expanded", original=query, expanded=expanded)
         return expanded
 
-    def _apply_keyword_boost(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    def _apply_keyword_boost(
+        self, query: str, chunks: list[RetrievedChunk]
+    ) -> list[RetrievedChunk]:
         """Boosts RetrievedChunk cosine scores based on exact lexical keyword hits."""
         query_words = set(re.findall(r"\w+", query.lower()))
         if not query_words:
@@ -557,7 +580,11 @@ class MultimodalRAG:
         # Check configuration
         has_gemini = hasattr(llm, "is_configured") and getattr(llm, "is_configured")
 
-        logger.info("extracting_graph_entities_and_relations", chunks_count=len(chunks), use_gemini=has_gemini)
+        logger.info(
+            "extracting_graph_entities_and_relations",
+            chunks_count=len(chunks),
+            use_gemini=has_gemini,
+        )
 
         for chunk in chunks:
             if not chunk.text or len(chunk.text.strip()) < 20:
@@ -571,14 +598,16 @@ class MultimodalRAG:
                         "Extract key academic concepts (concepts, terms, theories, definitions) and their semantic relationships from the text.\n"
                         "Format the output strictly as a JSON object (no markdown, no wrap blocks, no formatting other than pure JSON) with the following structure:\n"
                         "{\n"
-                        "  \"entities\": [{\"name\": \"Concept Name\", \"type\": \"Concept\"}],\n"
-                        "  \"relations\": [{\"source\": \"Concept A\", \"target\": \"Concept B\", \"type\": \"DEFINES\"}]\n"
+                        '  "entities": [{"name": "Concept Name", "type": "Concept"}],\n'
+                        '  "relations": [{"source": "Concept A", "target": "Concept B", "type": "DEFINES"}]\n'
                         "}\n"
                         "Keep types simple (e.g. Concept, Definition, Term, Process). Keep relation types simple (e.g. DEFINES, PART_OF, PREREQUISITE_FOR, RELATED_TO)."
                     )
 
                     # Call LLM generate using the chunk as context
-                    llm_res = llm.generate(question_prompt, [RetrievedChunk(text=chunk.text, metadata={}, score=1.0)])
+                    llm_res = llm.generate(
+                        question_prompt, [RetrievedChunk(text=chunk.text, metadata={}, score=1.0)]
+                    )
 
                     # Parse JSON
                     clean_res = re.sub(r"```json|```", "", llm_res).strip()
@@ -593,21 +622,27 @@ class MultimodalRAG:
                         name = ent.get("name", "").strip()
                         ent_type = ent.get("type", "Concept").strip()
                         if name:
-                            graphstore.upsert_entity(name, ent_type, {
-                                "source_file": source_file,
-                                "chunk_id": chunk.chunk_id,
-                                "text": chunk.text[:200]
-                            })
+                            graphstore.upsert_entity(
+                                name,
+                                ent_type,
+                                {
+                                    "source_file": source_file,
+                                    "chunk_id": chunk.chunk_id,
+                                    "text": chunk.text[:200],
+                                },
+                            )
 
                     for rel in relations:
                         src = rel.get("source", "").strip()
                         tgt = rel.get("target", "").strip()
                         r_type = rel.get("type", "RELATED_TO").strip()
                         if src and tgt:
-                            graphstore.upsert_relationship(src, tgt, r_type, {
-                                "source_file": source_file,
-                                "chunk_id": chunk.chunk_id
-                            })
+                            graphstore.upsert_relationship(
+                                src,
+                                tgt,
+                                r_type,
+                                {"source_file": source_file, "chunk_id": chunk.chunk_id},
+                            )
 
                     extracted = True
                 except Exception as e:
@@ -626,19 +661,21 @@ class MultimodalRAG:
         source_file = chunk.metadata.get("source_file", "Unknown Document")
 
         for entity in unique_candidates:
-            graphstore.upsert_entity(entity, "Concept", {
-                "source_file": source_file,
-                "chunk_id": chunk.chunk_id,
-                "text": chunk.text[:200]
-            })
+            graphstore.upsert_entity(
+                entity,
+                "Concept",
+                {"source_file": source_file, "chunk_id": chunk.chunk_id, "text": chunk.text[:200]},
+            )
             # Associate to section header if available
             section = chunk.metadata.get("section_header")
             if section and section != "Untitled Section":
                 graphstore.upsert_entity(section, "Section", {"source_file": source_file})
-                graphstore.upsert_relationship(entity, section, "PART_OF", {
-                    "source_file": source_file,
-                    "chunk_id": chunk.chunk_id
-                })
+                graphstore.upsert_relationship(
+                    entity,
+                    section,
+                    "PART_OF",
+                    {"source_file": source_file, "chunk_id": chunk.chunk_id},
+                )
 
     def _retrieve_graph_context(self, question: str) -> list[RetrievedChunk]:
         """Scans the query for known graph concepts and fetches their relations as supplementary chunks."""
@@ -661,8 +698,7 @@ class MultimodalRAG:
             # Mock graph store fallback
             elif hasattr(graphstore, "_nodes"):
                 matched_entities = [
-                    name for name in graphstore._nodes
-                    if name.lower() in question.lower()
+                    name for name in graphstore._nodes if name.lower() in question.lower()
                 ]
         except Exception as e:
             logger.warning("graph_entity_matching_failed", error=str(e))
@@ -670,7 +706,11 @@ class MultimodalRAG:
         if not matched_entities:
             return []
 
-        logger.info("matched_graph_entities_for_query", count=len(matched_entities), entities=matched_entities)
+        logger.info(
+            "matched_graph_entities_for_query",
+            count=len(matched_entities),
+            entities=matched_entities,
+        )
 
         graph_chunks = []
         for entity in matched_entities:
@@ -689,16 +729,18 @@ class MultimodalRAG:
 
                 source_file = target_props.get("source_file", "Knowledge Graph")
 
-                graph_chunks.append(RetrievedChunk(
-                    text=relation_desc,
-                    metadata={
-                        "source_file": source_file,
-                        "source_type": "🕸️ Đồ thị tri thức (Graph)",
-                        "page_number": 1,
-                        "section_header": f"Graph: {src} -> {tgt}"
-                    },
-                    score=0.85
-                ))
+                graph_chunks.append(
+                    RetrievedChunk(
+                        text=relation_desc,
+                        metadata={
+                            "source_file": source_file,
+                            "source_type": "🕸️ Đồ thị tri thức (Graph)",
+                            "page_number": 1,
+                            "section_header": f"Graph: {src} -> {tgt}",
+                        },
+                        score=0.85,
+                    )
+                )
         return graph_chunks
 
     def generate_answer(
@@ -760,6 +802,7 @@ class MultimodalRAG:
         """Checks if embedding model is ready."""
         try:
             from edumind.services.embedding.mock import MockEmbeddingProvider
+
             emb = self._get_embedding_provider()
             return not isinstance(emb, MockEmbeddingProvider)
         except Exception:

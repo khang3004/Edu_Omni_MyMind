@@ -39,7 +39,9 @@ router = APIRouter(prefix="/translate", tags=["Translation — VietMix"])
     summary="Translator status",
     description="Returns whether the translator is running in neural-model mode or rule-based mode.",
 )
-def translation_status(translator: VietMixTranslator = Depends(get_translator)) -> TranslatorStatusResponse:
+def translation_status(
+    translator: VietMixTranslator = Depends(get_translator),
+) -> TranslatorStatusResponse:
     """Return current translator operational mode."""
     return TranslatorStatusResponse(
         mode=translator.mode,

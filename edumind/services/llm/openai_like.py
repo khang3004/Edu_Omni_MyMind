@@ -97,9 +97,7 @@ class OpenAILikeLLMProvider(LLMProvider):
 
             response = client.chat.completions.create(
                 model=self._model_name,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
 

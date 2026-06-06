@@ -80,12 +80,14 @@ class MockGraphStore(GraphStore):
                 break
 
         if not exists:
-            self._edges.append({
-                "source": src,
-                "target": tgt,
-                "type": rel_type,
-                "properties": props,
-            })
+            self._edges.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "type": rel_type,
+                    "properties": props,
+                }
+            )
         logger.debug("mock_graph_upsert_relationship", source=src, target=tgt, type=rel_type)
 
     def query_neighborhood(self, entity_name: str, depth: int = 1) -> list[dict[str, Any]]:
@@ -100,25 +102,29 @@ class MockGraphStore(GraphStore):
             if edge["source"] == name:
                 target_node = self._nodes.get(edge["target"])
                 if target_node:
-                    results.append({
-                        "source": name,
-                        "relationship": edge["type"],
-                        "target": edge["target"],
-                        "target_type": target_node["type"],
-                        "target_properties": target_node["properties"],
-                        "relationship_properties": edge["properties"],
-                    })
+                    results.append(
+                        {
+                            "source": name,
+                            "relationship": edge["type"],
+                            "target": edge["target"],
+                            "target_type": target_node["type"],
+                            "target_properties": target_node["properties"],
+                            "relationship_properties": edge["properties"],
+                        }
+                    )
             elif edge["target"] == name:
                 source_node = self._nodes.get(edge["source"])
                 if source_node:
-                    results.append({
-                        "source": edge["source"],
-                        "relationship": edge["type"],
-                        "target": name,
-                        "source_type": source_node["type"],
-                        "source_properties": source_node["properties"],
-                        "relationship_properties": edge["properties"],
-                    })
+                    results.append(
+                        {
+                            "source": edge["source"],
+                            "relationship": edge["type"],
+                            "target": name,
+                            "source_type": source_node["type"],
+                            "source_properties": source_node["properties"],
+                            "relationship_properties": edge["properties"],
+                        }
+                    )
         return results
 
     def clear_graph(self) -> bool:

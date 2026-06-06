@@ -17,6 +17,7 @@ from edumind.modules.vietmix_translator import VietMixTranslator
 @lru_cache(maxsize=1)
 def _asr_singleton() -> CodeSwitchedASR:
     from edumind.config import get_settings
+
     settings = get_settings()
     return CodeSwitchedASR(model_name=settings.WHISPER_MODEL)
 
@@ -34,6 +35,7 @@ def _rag_singleton() -> MultimodalRAG:
 # ---------------------------------------------------------------------------
 # FastAPI Depends() callables
 # ---------------------------------------------------------------------------
+
 
 def get_asr() -> CodeSwitchedASR:
     """FastAPI dependency — returns the shared ASR module instance."""
