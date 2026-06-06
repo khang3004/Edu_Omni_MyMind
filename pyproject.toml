@@ -83,6 +83,13 @@ ignore = [
     "PLR2004",  # ignore magic constants rule (often used in deep learning)
     "PLR0913",  # ignore too many arguments rule (standard in PyTorch trainers)
     "E501",     # ignore line too long rule (standard for logging & raw config keys)
+    "PLC0415",  # ignore local imports (used for lazy-loading heavy libraries like torch/whisper/docling)
+    "PLW0603",  # ignore global statement (used in container DI pattern)
+    "PLR0911",  # ignore too many return statements
+    "PLR0912",  # ignore too many branches
+    "PLR0915",  # ignore too many statements
+    "N802",     # ignore function name should be lowercase (vital for UPPERCASE computed settings fields)
+    "N806",     # ignore variable name should be lowercase (e.g. EXAMPLES)
 ]
 
 [tool.ruff.lint.isort]

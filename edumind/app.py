@@ -232,7 +232,6 @@ def _render_sidebar() -> None:
             from edumind.core.container import get_graph_store
             gs = get_graph_store()
             g_info = gs.graph_info()
-            mode = g_info.get("storage_mode", "Mock")
             if gs.is_ready:
                 n = g_info.get("nodes_count", 0)
                 e = g_info.get("edges_count", 0)

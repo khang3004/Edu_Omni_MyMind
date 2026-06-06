@@ -144,7 +144,7 @@ def run_benchmark() -> None:
     vectorstore = rag._get_vectorstore()
     expanded = rag._expand_query(query)
     q_vec = emb_provider.encode([expanded])[0].tolist()
-    retrieved = vectorstore.search(q_vec, limit=5)
+    _ = vectorstore.search(q_vec, limit=5)
     t_search = (time.perf_counter() - t0) * 1000
     print(f"   - Raw Vector Search (Qdrant) Latency:      {GREEN}{t_search:.2f} ms{RESET}")
 
