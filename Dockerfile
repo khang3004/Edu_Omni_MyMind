@@ -29,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Python environment -------------------------------------------------------
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    # Force CPU-only PyTorch to save gigabytes of Docker disk space
+    UV_TORCH_BACKEND=cpu \
     # Prevent HuggingFace from polluting /root inside container
     HF_HOME=/workspace/.cache/huggingface \
     TORCH_HOME=/workspace/.cache/torch
