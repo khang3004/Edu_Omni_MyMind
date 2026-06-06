@@ -188,3 +188,4 @@ cython_debug/
 /tests/*
 label_studio_backend/README.md
 notebooks/finetune/README.md
+scripts/update_finetune_notebooks.py
