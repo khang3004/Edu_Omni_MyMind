@@ -1,10 +1,19 @@
 """Google Gemini LLM Provider.
 
-Synthesizes context-grounded answers utilizing the official Google Generative AI SDK.
+Synthesizes context-grounded answers utilizing the official Google Gen AI SDK.
 Supports dynamic API key rotation via KeyRotator.
+
+NOTE: Migrated from deprecated `google.generativeai` to `google.genai` (google-genai package).
 """
 
 from __future__ import annotations
+
+try:
+    from google import genai as _google_genai
+    from google.genai import types as _genai_types
+except ImportError:
+    _google_genai = None  # type: ignore[assignment]
+    _genai_types = None  # type: ignore[assignment]
 
 from edumind.core.exceptions import LLMError
 from edumind.core.logging import get_logger
@@ -22,14 +31,14 @@ class GeminiLLMProvider(LLMProvider):
     def __init__(
         self,
         api_key: str = "",
-        model_name: str = "gemini-1.5-flash",
+        model_name: str = "gemini-2.0-flash",
         api_key_prefix: str = "GEMINI_API_KEY_",
     ):
         """Initializes the Gemini provider.
 
         Args:
             api_key: The fallback static Google API Key.
-            model_name: The Gemini model variation (e.g. gemini-1.5-flash).
+            model_name: The Gemini model variation (e.g. gemini-2.0-flash).
             api_key_prefix: Tiền tố xoay vòng key.
         """
         self._api_key = api_key
@@ -64,11 +73,6 @@ class GeminiLLMProvider(LLMProvider):
         if not contexts:
             return "No relevant contexts available to generate an answer."
 
-        import google.generativeai as genai
-
-        # Configure client dynamically for the current key
-        genai.configure(api_key=key)
-
         # Construct a grounded RAG prompt
         context_str = ""
         for i, ctx in enumerate(contexts, start=1):
@@ -82,9 +86,12 @@ class GeminiLLMProvider(LLMProvider):
 
         prompt = (
             "You are EduMIND, an expert educational teaching assistant.\n"
-            "Your task is to answer the student's question based strictly on the provided context sections.\n"
-            "If the answer cannot be found in the context, clearly state that you do not have enough information.\n"
-            "Provide professional, clear, and comprehensive explanations. Cite your source chunks using standard notations.\n\n"
+            "Your task is to answer the student's question "
+            "based strictly on the provided context sections.\n"
+            "If the answer cannot be found in the context, "
+            "clearly state that you do not have enough information.\n"
+            "Provide professional, clear, and comprehensive explanations. "
+            "Cite your source chunks using standard notations.\n\n"
             f"--- Context ---\n{context_str}"
             f"--- Student Question ---\n{question}\n\n"
             "--- Your Educational Answer ---"
@@ -94,8 +101,19 @@ class GeminiLLMProvider(LLMProvider):
             logger.info(
                 "requesting_gemini_generation", model=self._model_name, chunks_count=len(contexts)
             )
-            model = genai.GenerativeModel(self._model_name)
-            response = model.generate_content(prompt)
+            if _google_genai is None:
+                raise LLMError(
+                    "google-genai package not installed. Run: uv add google-genai"
+                )
+            client = _google_genai.Client(api_key=key)
+            response = client.models.generate_content(
+                model=self._model_name,
+                contents=prompt,
+                config=_genai_types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=2048,
+                ),
+            )
             text_result = response.text.strip()
             logger.info("gemini_generation_success")
             return text_result

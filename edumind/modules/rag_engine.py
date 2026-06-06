@@ -11,6 +11,7 @@ This module handles Retrieval-Augmented Generation (RAG) for teaching documents:
 import json
 from pathlib import Path
 import re
+import threading
 
 import numpy as np
 
@@ -439,6 +440,9 @@ class MultimodalRAG:
     def embed_and_store(self, chunks: list[DocumentChunk]) -> int:
         """Computes text embeddings, saves the chunks inside Qdrant, and extracts Knowledge Graph in Neo4j.
 
+        Graph extraction is dispatched to a **daemon background thread** so the UI
+        is not blocked waiting for potentially hundreds of LLM calls.
+
         Args:
             chunks: A list of DocumentChunk objects to save.
 
@@ -460,11 +464,16 @@ class MultimodalRAG:
             indexed_count = vectorstore.upsert(chunks, embeddings)
             logger.info("indexing_completed", indexed_count=indexed_count)
 
-            # Build Neo4j knowledge graph asynchronously or sequentially
-            try:
-                self._extract_and_store_graph(chunks)
-            except Exception as e:
-                logger.error("graph_extraction_failed_skipping", error=str(e))
+            # Dispatch graph extraction to a daemon thread — never block the caller
+            def _bg_extract(chunk_list: list[DocumentChunk]) -> None:
+                try:
+                    self._extract_and_store_graph(chunk_list)
+                except Exception as ex:
+                    logger.error("graph_extraction_background_failed", error=str(ex))
+
+            t = threading.Thread(target=_bg_extract, args=(chunks,), daemon=True)
+            t.start()
+            logger.info("graph_extraction_dispatched_to_background", chunks_count=len(chunks))
 
             return indexed_count
         except (EmbeddingError, VectorStoreError) as e:
@@ -570,20 +579,68 @@ class MultimodalRAG:
             logger.error("unexpected_retrieval_failure", error=str(e))
             return []
 
+    def _get_graph_llm_provider(self) -> "LLMProvider":
+        """Retrieves the dedicated LLM provider for graph extraction.
+
+        Reads GRAPH_LLM_PROVIDER / GRAPH_LLM_MODEL from settings so graph extraction
+        can use a *different* provider than the main chat LLM (e.g. Gemini Flash for
+        graph vs. Groq for Q&A). Falls back to the main LLM provider.
+        """
+        from edumind.config import get_settings
+        settings = get_settings()
+        graph_provider = getattr(settings, "GRAPH_LLM_PROVIDER", "").strip()
+        graph_model = getattr(settings, "GRAPH_LLM_MODEL", "").strip()
+
+        if not graph_provider or graph_provider in ("same", ""):
+            # Fall back to main LLM
+            return self._get_llm_provider()
+
+        # Build a dedicated provider for graph extraction
+        from edumind.services.llm import (
+            GeminiLLMProvider,
+            OpenAILikeLLMProvider,
+            TemplateLLMProvider,
+        )
+        from edumind.utils.rotator import KeyRotator
+
+        provider_lower = graph_provider.lower()
+        if provider_lower == "google":
+            graph_key_prefix = getattr(settings, "GRAPH_LLM_KEY_PREFIX", "GEMINI_API_KEY_")
+            rotator_key = KeyRotator.get_key(graph_key_prefix)
+            static_key = settings.GOOGLE_API_KEY.get_secret_value()
+            if not rotator_key and not static_key:
+                return TemplateLLMProvider()
+            return GeminiLLMProvider(
+                api_key=static_key,
+                model_name=graph_model or "gemini-2.0-flash",
+                api_key_prefix=graph_key_prefix,
+            )
+        elif provider_lower in ("none", "mock", "template"):
+            return TemplateLLMProvider()
+        else:
+            graph_base_url = getattr(settings, "GRAPH_LLM_BASE_URL", "") or settings.LLM_BASE_URL
+            graph_key_prefix = getattr(settings, "GRAPH_LLM_KEY_PREFIX", settings.LLM_API_KEY_PREFIX)
+            return OpenAILikeLLMProvider(
+                model_name=graph_model or settings.LLM_MODEL,
+                api_key_prefix=graph_key_prefix,
+                base_url=graph_base_url,
+            )
+
     def _extract_and_store_graph(self, chunks: list[DocumentChunk]) -> None:
-        """Extracts concept entities and relationships from chunks using Gemini or regex fallback, then stores them."""
+        """Extracts concept entities and relationships from chunks using LLM or regex fallback."""
         graphstore = self._get_graph_store()
         if not graphstore.is_ready:
             return
 
-        llm = self._get_llm_provider()
-        # Check configuration
-        has_gemini = hasattr(llm, "is_configured") and getattr(llm, "is_configured")
+        llm = self._get_graph_llm_provider()
+        # Only use LLM extraction if the provider is properly configured
+        has_llm = hasattr(llm, "is_configured") and getattr(llm, "is_configured", False)
 
         logger.info(
             "extracting_graph_entities_and_relations",
             chunks_count=len(chunks),
-            use_gemini=has_gemini,
+            use_llm=has_llm,
+            llm_type=type(llm).__name__,
         )
 
         for chunk in chunks:
@@ -591,7 +648,7 @@ class MultimodalRAG:
                 continue
 
             extracted = False
-            if has_gemini:
+            if has_llm:
                 try:
                     # Construct extraction query
                     question_prompt = (
@@ -609,8 +666,14 @@ class MultimodalRAG:
                         question_prompt, [RetrievedChunk(text=chunk.text, metadata={}, score=1.0)]
                     )
 
-                    # Parse JSON
+                    # Parse JSON — guard against empty response and markdown prose wrappers
+                    if not llm_res or not llm_res.strip():
+                        raise ValueError("Empty LLM response for graph extraction")
                     clean_res = re.sub(r"```json|```", "", llm_res).strip()
+                    # Find first { ... } block if model wraps output in prose
+                    json_match = re.search(r"\{[\s\S]*\}", clean_res)
+                    if json_match:
+                        clean_res = json_match.group(0)
                     data = json.loads(clean_res)
 
                     entities = data.get("entities", [])
@@ -646,7 +709,7 @@ class MultimodalRAG:
 
                     extracted = True
                 except Exception as e:
-                    logger.warning("gemini_graph_extraction_failed_falling_back", error=str(e))
+                    logger.warning("llm_graph_extraction_failed_falling_back", error=str(e))
 
             if not extracted:
                 self._fallback_extract_and_store(chunk, graphstore)

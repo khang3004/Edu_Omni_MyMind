@@ -34,6 +34,7 @@ Environment (from .env):
     CORPUS_JSONL_PATH     Output JSONL path
 """
 
+
 from __future__ import annotations
 
 import argparse

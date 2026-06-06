@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # --- Google API ---
     GOOGLE_API_KEY: SecretStr = Field(default=SecretStr(""), validation_alias="GOOGLE_API_KEY")
 
+    # --- Graph Extraction LLM (separate from main chat LLM) ---
+    GRAPH_LLM_PROVIDER: str = Field(default="google", validation_alias="GRAPH_LLM_PROVIDER")
+    GRAPH_LLM_MODEL: str = Field(default="gemini-2.0-flash", validation_alias="GRAPH_LLM_MODEL")
+    GRAPH_LLM_BASE_URL: str = Field(default="", validation_alias="GRAPH_LLM_BASE_URL")
+    GRAPH_LLM_KEY_PREFIX: str = Field(
+        default="GEMINI_API_KEY_", validation_alias="GRAPH_LLM_KEY_PREFIX"
+    )
+
     # --- Internal Paths ---
     PROJ_ROOT: Path = PROJ_ROOT
     DATA_DIR: Path = PROJ_ROOT / "data"

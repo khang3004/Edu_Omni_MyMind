@@ -345,7 +345,7 @@ def _tab_asr() -> None:
         run_btn = st.button(
             "🎤 Transcribe Audio",
             key="btn_transcribe",
-            use_container_width=True,
+            width="stretch",
             type="primary",
             disabled=audio_file is None,
         )
@@ -353,7 +353,7 @@ def _tab_asr() -> None:
         mock_btn = st.button(
             "🎭 Demo (Mock Data)",
             key="btn_mock_asr",
-            use_container_width=True,
+            width="stretch",
         )
 
     if run_btn and audio_file:
@@ -408,7 +408,7 @@ def _display_transcript(asr, result) -> None:
             s = f"{int(seg.start // 60):02d}:{seg.start % 60:05.2f}"
             e = f"{int(seg.end // 60):02d}:{seg.end % 60:05.2f}"
             seg_data.append({"Start": s, "End": e, "Text": seg.text})
-        st.dataframe(seg_data, use_container_width=True, hide_index=True)
+        st.dataframe(seg_data, width="stretch", hide_index=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -537,7 +537,7 @@ def _tab_knowledge_base() -> None:
             ingest_btn = st.button(
                 "📥 Index Documents",
                 key="btn_ingest",
-                use_container_width=True,
+                width="stretch",
                 type="primary",
                 disabled=not uploaded_files,
             )
@@ -545,7 +545,7 @@ def _tab_knowledge_base() -> None:
             clear_btn = st.button(
                 "🗑️ Clear Index",
                 key="btn_clear_rag",
-                use_container_width=True,
+                width="stretch",
             )
 
         if clear_btn:
@@ -598,7 +598,7 @@ def _tab_knowledge_base() -> None:
         search_btn = st.button(
             "🔍 Search Knowledge Base",
             key="btn_search",
-            use_container_width=True,
+            width="stretch",
             type="primary",
         )
 
@@ -698,11 +698,11 @@ def _tab_graph() -> None:
         st.error(f"Error loading graph: {exc}")
 
     if connections:
-        st.dataframe(connections, use_container_width=True)
+        st.dataframe(connections, width="stretch")
     else:
         st.info("💡 Graph is empty. Ingest PDFs in the Knowledge Base tab to populate it.")
 
-    if st.button("🗑️ Wipe Graph Store", key="btn_clear_graph", use_container_width=True):
+    if st.button("🗑️ Wipe Graph Store", key="btn_clear_graph", width="stretch"):
         if gs.clear_graph():
             st.success("✅ Graph wiped!")
             st.rerun()
