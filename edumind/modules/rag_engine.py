@@ -39,7 +39,7 @@ class CrossEncoderReRanker:
         self.model_name = model_name
         self._model = None
         self._attempted = False
-        
+
         # Instantiate a Time-To-Live (TTL) cache to bypass scoring repetitive queries/contexts
         try:
             from cachetools import TTLCache
@@ -108,7 +108,7 @@ class CrossEncoderReRanker:
                     # Sigmoid maps logit score to standard probability interval [0, 1]
                     sigmoid_score = 1.0 / (1.0 + np.exp(-val))
                     rounded_score = round(sigmoid_score, 4)
-                    
+
                     chunk = candidates[original_idx]
                     chunk.score = rounded_score
                     # Save to cache
@@ -353,31 +353,30 @@ class MultimodalRAG:
         def flush_paragraph(paragraph_lines: list[str], section: str, chunk_idx: int) -> int:
             if not paragraph_lines:
                 return chunk_idx
-            
+
             joined_text_parts = []
             for i, line_text in enumerate(paragraph_lines):
                 line_str = line_text.strip()
                 if not line_str:
                     continue
-                
+
                 # Handle physical line end hyphenation (e.g. multi-\nmodal)
                 if line_str.endswith("-") and len(line_str) > 1:
                     joined_text_parts.append(line_str[:-1])
-                else:
-                    if joined_text_parts:
-                        prev_line = paragraph_lines[i - 1].strip()
-                        # If previous line did not end with standard sentence punctuation, merge with space
-                        if prev_line and prev_line[-1] not in (".", "?", "!", ":", ";"):
-                            joined_text_parts.append(" " + line_str)
-                        else:
-                            joined_text_parts.append("\n" + line_str)
+                elif joined_text_parts:
+                    prev_line = paragraph_lines[i - 1].strip()
+                    # If previous line did not end with standard sentence punctuation, merge with space
+                    if prev_line and prev_line[-1] not in (".", "?", "!", ":", ";"):
+                        joined_text_parts.append(" " + line_str)
                     else:
-                        joined_text_parts.append(line_str)
-            
+                        joined_text_parts.append("\n" + line_str)
+                else:
+                    joined_text_parts.append(line_str)
+
             para_text = "".join(joined_text_parts).strip()
             # Normalize redundant spaces
             para_text = re.sub(r"[ \t]+", " ", para_text)
-            
+
             if para_text:
                 for sub_chunk in split_long_text(para_text, max_chunk_size, overlap):
                     chunks.append(DocumentChunk(
@@ -525,7 +524,7 @@ class MultimodalRAG:
             # 5. Merge and deduplicate candidates by chunk text similarity
             seen_texts = set()
             merged_chunks = []
-            
+
             for chunk in retrieved + graph_chunks:
                 norm_text = chunk.text.strip().lower()
                 if norm_text not in seen_texts:
@@ -577,19 +576,19 @@ class MultimodalRAG:
                         "}\n"
                         "Keep types simple (e.g. Concept, Definition, Term, Process). Keep relation types simple (e.g. DEFINES, PART_OF, PREREQUISITE_FOR, RELATED_TO)."
                     )
-                    
+
                     # Call LLM generate using the chunk as context
                     llm_res = llm.generate(question_prompt, [RetrievedChunk(text=chunk.text, metadata={}, score=1.0)])
-                    
+
                     # Parse JSON
                     clean_res = re.sub(r"```json|```", "", llm_res).strip()
                     data = json.loads(clean_res)
-                    
+
                     entities = data.get("entities", [])
                     relations = data.get("relations", [])
-                    
+
                     source_file = chunk.metadata.get("source_file", "Unknown Document")
-                    
+
                     for ent in entities:
                         name = ent.get("name", "").strip()
                         ent_type = ent.get("type", "Concept").strip()
@@ -599,7 +598,7 @@ class MultimodalRAG:
                                 "chunk_id": chunk.chunk_id,
                                 "text": chunk.text[:200]
                             })
-                            
+
                     for rel in relations:
                         src = rel.get("source", "").strip()
                         tgt = rel.get("target", "").strip()
@@ -609,11 +608,11 @@ class MultimodalRAG:
                                 "source_file": source_file,
                                 "chunk_id": chunk.chunk_id
                             })
-                    
+
                     extracted = True
                 except Exception as e:
                     logger.warning("gemini_graph_extraction_failed_falling_back", error=str(e))
-            
+
             if not extracted:
                 self._fallback_extract_and_store(chunk, graphstore)
 
@@ -623,9 +622,9 @@ class MultimodalRAG:
         # Find single/multi-word capitalized terms (potential concepts)
         candidates = re.findall(r"\b[A-Z][a-zA-Z0-9_]{1,15}(?:\s+[A-Z][a-zA-Z0-9_]{1,15})*\b", text)
         unique_candidates = list(set([c.strip() for c in candidates if len(c.strip()) > 3]))
-        
+
         source_file = chunk.metadata.get("source_file", "Unknown Document")
-        
+
         for entity in unique_candidates:
             graphstore.upsert_entity(entity, "Concept", {
                 "source_file": source_file,
@@ -680,10 +679,10 @@ class MultimodalRAG:
                 src = record["source"]
                 rel = record["relationship"]
                 tgt = record["target"]
-                
+
                 # Format relational context
                 relation_desc = f"Đồ thị tri thức (Knowledge Graph): Khái niệm '{src}' liên kết với '{tgt}' qua quan hệ '{rel}'."
-                
+
                 target_props = record.get("target_properties", {})
                 if target_props.get("text"):
                     relation_desc += f" Chi tiết ngữ cảnh: {target_props['text']}"
@@ -760,6 +759,7 @@ class MultimodalRAG:
     def has_embedding_model(self) -> bool:
         """Checks if embedding model is ready."""
         try:
+            from edumind.services.embedding.mock import MockEmbeddingProvider
             emb = self._get_embedding_provider()
             return not isinstance(emb, MockEmbeddingProvider)
         except Exception:

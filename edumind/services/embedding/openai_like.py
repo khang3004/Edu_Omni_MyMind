@@ -12,8 +12,8 @@ import openai
 from edumind.core.exceptions import EmbeddingError
 from edumind.core.logging import get_logger
 from edumind.services.embedding.base import EmbeddingProvider
-from edumind.utils.rotator import KeyRotator
 from edumind.utils.retry import retry_on_transient_error
+from edumind.utils.rotator import KeyRotator
 
 logger = get_logger(__name__)
 
@@ -84,7 +84,7 @@ class OpenAILikeEmbeddingProvider(EmbeddingProvider):
                 base_url=self._base_url,
                 count=len(texts),
             )
-            
+
             client = openai.OpenAI(
                 api_key=api_key,
                 base_url=self._base_url,
@@ -94,7 +94,7 @@ class OpenAILikeEmbeddingProvider(EmbeddingProvider):
                 input=texts,
                 model=self._model_name,
             )
-            
+
             # Map response data objects to numpy float32 matrix
             vectors = [item.embedding for item in response.data]
             return np.array(vectors, dtype=np.float32)

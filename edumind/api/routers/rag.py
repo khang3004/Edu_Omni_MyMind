@@ -24,8 +24,6 @@ Usage (Postman / curl):
 from __future__ import annotations
 
 import gc
-import tempfile
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 

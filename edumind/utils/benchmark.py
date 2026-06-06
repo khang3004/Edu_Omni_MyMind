@@ -10,14 +10,14 @@ Measures processing latency, throughput, and efficiency across all core modules:
 from __future__ import annotations
 
 import time
+
 import numpy as np
-from pathlib import Path
 
 from edumind.config import get_settings
+from edumind.models.chunks import DocumentChunk
+from edumind.modules.rag_engine import MultimodalRAG
 from edumind.modules.speech_processor import CodeSwitchedASR
 from edumind.modules.vietmix_translator import VietMixTranslator
-from edumind.modules.rag_engine import MultimodalRAG
-from edumind.models.chunks import DocumentChunk
 
 # ANSI color codes for pretty printing
 GREEN = "\033[92m"
@@ -60,16 +60,16 @@ def run_benchmark() -> None:
         "Mn nhớ submit bài trc dl nhé, ko là ăn con ngỗng",
         "attn và backprop là hai phần rất quan trọng trong NLP và DL"
     ]
-    
+
     asr_times = []
     # Dry run
     asr.post_process(test_phrases[0])
-    
+
     for phrase in test_phrases:
         t0 = time.perf_counter()
         asr.post_process(phrase)
         asr_times.append(time.perf_counter() - t0)
-        
+
     avg_asr = np.mean(asr_times) * 1000
     p95_asr = np.percentile(asr_times, 95) * 1000
     print(f"   - Input sentences:       {len(test_phrases)}")
@@ -85,16 +85,16 @@ def run_benchmark() -> None:
         "Mọi người nhớ review lại backpropagation và gradient descent trước buổi sau",
         "Đầu tiên mình giải thích về activation function trong neural network"
     ]
-    
+
     cmi_times = []
     # Dry run
     translator.calculate_cmi(cmi_phrases[0])
-    
+
     for phrase in cmi_phrases:
         t0 = time.perf_counter()
         translator.calculate_cmi(phrase)
         cmi_times.append(time.perf_counter() - t0)
-        
+
     avg_cmi = np.mean(cmi_times) * 1000
     p95_cmi = np.percentile(cmi_times, 95) * 1000
     print(f"   - Input sentences:       {len(cmi_phrases)}")
@@ -104,13 +104,13 @@ def run_benchmark() -> None:
     # --- Benchmark 3: Translation Speed (Rule-based vs HuggingFace) ---
     print(f"📊 {BOLD}[3/4] Benchmarking Translation Providers...{RESET}")
     trans_text = "Hôm nay mình sẽ discuss về loss function trong deep learning model"
-    
+
     # Rule-based
     t0 = time.perf_counter()
     translator.translate_to_english(trans_text)
     t_rule = (time.perf_counter() - t0) * 1000
     print(f"   - Rule-based Translation Latency:   {GREEN}{t_rule:.2f} ms{RESET}")
-    
+
     # HuggingFace (if loaded)
     if translator.is_model_loaded:
         t0 = time.perf_counter()
@@ -123,20 +123,20 @@ def run_benchmark() -> None:
 
     # --- Benchmark 4: RAG Retrieval & Re-ranking Latency ---
     print(f"📊 {BOLD}[4/4] Benchmarking Qdrant Search & Cross-Encoder Re-ranking...{RESET}")
-    
+
     # Create mock chunks to benchmark search
     mock_chunks = [
         DocumentChunk(text=f"This is document chunk number {i} talking about deep learning and attention mechanism in transformers.", metadata={"source": "test"})
         for i in range(20)
     ]
-    
+
     # Index chunks
     print("   - Indexing 20 mock chunks to vector store...")
     rag.clear_index()
     rag.embed_and_store(mock_chunks)
-    
+
     query = "attention mechanism in transformers"
-    
+
     # Measure Qdrant Search Latency (no reranking)
     t0 = time.perf_counter()
     # bypass rerank for raw comparison
@@ -147,7 +147,7 @@ def run_benchmark() -> None:
     retrieved = vectorstore.search(q_vec, limit=5)
     t_search = (time.perf_counter() - t0) * 1000
     print(f"   - Raw Vector Search (Qdrant) Latency:      {GREEN}{t_search:.2f} ms{RESET}")
-    
+
     # Measure Cross-Encoder Re-ranking Latency (Cache miss)
     # Clear cache to measure fresh prediction
     rag._reranker._cache.clear()
@@ -155,13 +155,13 @@ def run_benchmark() -> None:
     rag.query(query, top_k=5)
     t_query_fresh = (time.perf_counter() - t0) * 1000
     print(f"   - RAG Query + Re-ranking (Cache Miss):     {YELLOW}{t_query_fresh:.2f} ms{RESET}")
-    
+
     # Measure Cross-Encoder Re-ranking Latency (Cache hit)
     t0 = time.perf_counter()
     rag.query(query, top_k=5)
     t_query_cached = (time.perf_counter() - t0) * 1000
     print(f"   - RAG Query + Re-ranking (Cache Hit):      {GREEN}{t_query_cached:.2f} ms{RESET}")
-    
+
     print(f"\n{BOLD}{CYAN}===================================================={RESET}")
     print(f"{BOLD}{GREEN}            BENCHMARK COMPLETED SUCCESSFULLY        {RESET}")
     print(f"{BOLD}{CYAN}===================================================={RESET}\n")

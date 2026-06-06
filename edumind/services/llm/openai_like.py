@@ -12,8 +12,8 @@ from edumind.core.exceptions import LLMError
 from edumind.core.logging import get_logger
 from edumind.models.chunks import RetrievedChunk
 from edumind.services.llm.base import LLMProvider
-from edumind.utils.rotator import KeyRotator
 from edumind.utils.retry import retry_on_transient_error
+from edumind.utils.rotator import KeyRotator
 
 logger = get_logger(__name__)
 
@@ -52,7 +52,7 @@ class OpenAILikeLLMProvider(LLMProvider):
         """
         # Resolve rotating API key
         api_key = KeyRotator.get_key(self._api_key_prefix)
-        
+
         # Ollama or local endpoints might not require keys, set dummy placeholder
         if not api_key:
             api_key = "dummy_key_placeholder"
@@ -88,7 +88,7 @@ class OpenAILikeLLMProvider(LLMProvider):
                 base_url=self._base_url,
                 chunks_count=len(contexts),
             )
-            
+
             # Instantiate fresh client for each request to easily apply rotating keys
             client = openai.OpenAI(
                 api_key=api_key,
@@ -102,11 +102,11 @@ class OpenAILikeLLMProvider(LLMProvider):
                 ],
                 temperature=0.3,
             )
-            
+
             text_result = response.choices[0].message.content
             if not text_result:
                 raise LLMError("Received empty response from OpenAI-compatible endpoint.")
-                
+
             logger.info("openai_like_generation_success")
             return text_result.strip()
         except Exception as e:

@@ -23,9 +23,8 @@ Usage (Postman / curl):
 from __future__ import annotations
 
 import gc
-import tempfile
 from pathlib import Path
-from typing import Optional
+import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
@@ -43,8 +42,8 @@ _AUDIO_FORMATS = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
 async def _run_pipeline(
     asr: CodeSwitchedASR,
     rag: MultimodalRAG,
-    pdf_file: Optional[UploadFile],
-    audio_file: Optional[UploadFile],
+    pdf_file: UploadFile | None,
+    audio_file: UploadFile | None,
     use_mock_audio: bool = False,
 ) -> PipelineResponse:
     """Shared pipeline logic for real and mock runs."""
@@ -121,8 +120,8 @@ async def _run_pipeline(
     ),
 )
 async def run_pipeline(
-    pdf: Optional[UploadFile] = File(default=None, description="Lecture PDF slides"),
-    audio: Optional[UploadFile] = File(default=None, description="Lecture audio recording"),
+    pdf: UploadFile | None = File(default=None, description="Lecture PDF slides"),
+    audio: UploadFile | None = File(default=None, description="Lecture audio recording"),
     asr: CodeSwitchedASR = Depends(get_asr),
     rag: MultimodalRAG = Depends(get_rag),
 ) -> PipelineResponse:
@@ -146,7 +145,7 @@ async def run_pipeline(
     ),
 )
 async def run_mock_pipeline(
-    pdf: Optional[UploadFile] = File(default=None, description="Optional lecture PDF slides"),
+    pdf: UploadFile | None = File(default=None, description="Optional lecture PDF slides"),
     asr: CodeSwitchedASR = Depends(get_asr),
     rag: MultimodalRAG = Depends(get_rag),
 ) -> PipelineResponse:

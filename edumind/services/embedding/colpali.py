@@ -6,6 +6,8 @@ Falls back gracefully if libraries are missing.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from edumind.core.exceptions import EmbeddingError
@@ -33,10 +35,10 @@ class ColPaliEmbeddingProvider(EmbeddingProvider):
 
         try:
             logger.info("loading_colpali_model", model_name=self._model_name, device=self._device)
-            import torch
-            from transformers import AutoProcessor
             # colpali-engine imports
             from colpali_engine.models import ColPali
+            import torch
+            from transformers import AutoProcessor
 
             # Load model in low memory mode
             self._model = ColPali.from_pretrained(
@@ -62,7 +64,7 @@ class ColPaliEmbeddingProvider(EmbeddingProvider):
             return np.empty((0, self.dimension), dtype=np.float32)
 
         self._load_model()
-        
+
         # If model failed to load, generate mock/simulated vectors
         if self._model is None:
             logger.debug("colpali_not_available_generating_mock_query_vectors")

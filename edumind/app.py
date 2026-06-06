@@ -28,8 +28,8 @@ except ImportError:
     pass
 
 import gc
-import tempfile
 from pathlib import Path
+import tempfile
 
 import streamlit as st
 
@@ -238,7 +238,7 @@ def _render_sidebar() -> None:
                 e = g_info.get("edges_count", 0)
                 _badge(f"🟢 Graph: {n}n {e}e", "status-ready")
             else:
-                _badge(f"🟡 Graph Mock (RAM)", "status-mock")
+                _badge("🟡 Graph Mock (RAM)", "status-mock")
         except Exception:
             _badge("🔴 Graph Error", "status-error")
 

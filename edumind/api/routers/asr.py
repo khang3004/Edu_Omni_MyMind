@@ -11,8 +11,8 @@ Usage (Postman / curl):
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
+import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 

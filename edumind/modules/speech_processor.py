@@ -6,11 +6,10 @@ Supports OpenAI's Whisper model with dynamic fallback capabilities.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
-
 import threading
-import json
 
 from edumind.config import get_settings
 from edumind.core.logging import get_logger

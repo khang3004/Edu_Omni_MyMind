@@ -15,13 +15,18 @@ from edumind.services.embedding import (
     ColPaliEmbeddingProvider,
     EmbeddingProvider,
     MockEmbeddingProvider,
-    SentenceTransformerEmbeddingProvider,
     OpenAILikeEmbeddingProvider,
+    SentenceTransformerEmbeddingProvider,
 )
-from edumind.services.llm import GeminiLLMProvider, LLMProvider, TemplateLLMProvider, OpenAILikeLLMProvider
+from edumind.services.graphstore import GraphStore, MockGraphStore, Neo4jGraphStore
+from edumind.services.llm import (
+    GeminiLLMProvider,
+    LLMProvider,
+    OpenAILikeLLMProvider,
+    TemplateLLMProvider,
+)
 from edumind.services.translation import HuggingFaceTranslationProvider, TranslationProvider
 from edumind.services.vectorstore import QdrantVectorStore, VectorStore
-from edumind.services.graphstore import GraphStore, MockGraphStore, Neo4jGraphStore
 from edumind.utils.rotator import KeyRotator
 
 logger = get_logger(__name__)

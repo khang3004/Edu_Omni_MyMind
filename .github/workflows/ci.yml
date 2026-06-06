@@ -1,37 +1,110 @@
-name: Continuous Integration (MLOps Pipeline)
+name: CI — EduMIND MLOps Pipeline
 
 on:
-    push:
-        branches: [main]
-    pull_request:
-        branches: [main]
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
 
 jobs:
-    code-quality-and-test:
-        name: Code Quality & Testing Suite
-        runs-on: ubuntu-latest
+  # ────────────────────────────────────────────────────────────────────────
+  # Job 1: Lint & Format (fast — no heavy deps needed)
+  # ────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Format (Ruff)
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: Checkout Source Code
-              uses: actions/checkout@v4
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-            - name: Install uv (Ultra-fast Package Manager)
-              uses: astral-sh/setup-uv@v5
-              with:
-                  version: "latest"
-                  enable-cache: true # Caches venv for faster sequential builds
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
 
-            - name: Set up Python
-              uses: actions/setup-python@v5
-              with:
-                  python-version-file: "pyproject.toml"
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.PYTHON_VERSION }}
 
-            - name: Lint and Format Audit via Ruff
-              run: |
-                  uv pip install ruff
-                  make format
+      # uv tool install runs ruff as an isolated CLI tool — no venv needed
+      - name: Install Ruff (as uv tool)
+        run: uv tool install ruff
 
-            - name: Run PyTorch Architecture & Dataset Unit Tests
-              run: |
-                  uv sync
-                  make test
+      - name: Ruff — lint check
+        run: uv tool run ruff check . --output-format=github
+
+      - name: Ruff — format check
+        run: uv tool run ruff format --check .
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Job 2: Unit tests (with real venv + project deps)
+  # ────────────────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint # only run tests if linting passes
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      # Sync project deps into uv-managed venv (respects pyproject.toml extras)
+      - name: Install project dependencies
+        run: uv sync --frozen
+
+      - name: Run unit tests
+        env:
+          # Minimal stub secrets so settings.py doesn't crash on import
+          GEMINI_API_KEY_1: "stub"
+          GROQ_API_KEY_1: "stub"
+          HF_TOKEN: "stub"
+          QDRANT_URL: "http://localhost:6333"
+        run: uv run pytest tests/ -v --tb=short -x
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Job 3: Build check (verifies the package imports correctly)
+  # ────────────────────────────────────────────────────────────────────────
+  build-check:
+    name: Build & Import Check
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install core dependencies (no extras)
+        run: uv sync --frozen
+
+      - name: Verify package imports
+        env:
+          GEMINI_API_KEY_1: "stub"
+          GROQ_API_KEY_1: "stub"
+          HF_TOKEN: "stub"
+          QDRANT_URL: "http://localhost:6333"
+        run: |
+          uv run python -c "import edumind; print('✅ edumind package imports OK')"
+          uv run python -c "from edumind.config import get_settings; print('✅ settings OK')"

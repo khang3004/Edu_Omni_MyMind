@@ -10,8 +10,8 @@ from edumind.core.exceptions import LLMError
 from edumind.core.logging import get_logger
 from edumind.models.chunks import RetrievedChunk
 from edumind.services.llm.base import LLMProvider
-from edumind.utils.rotator import KeyRotator
 from edumind.utils.retry import retry_on_transient_error
+from edumind.utils.rotator import KeyRotator
 
 logger = get_logger(__name__)
 
