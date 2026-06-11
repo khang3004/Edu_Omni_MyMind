@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
 
     # --- Translation ---
+    TRANSLATION_PROVIDER: str = Field(default="huggingface")
     TRANSLATION_MODEL: str = Field(default="none")
 
     # --- Qdrant (explicitly not prefixed with EDUMIND_) ---

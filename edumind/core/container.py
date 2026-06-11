@@ -200,7 +200,7 @@ def get_llm_provider() -> LLMProvider:
 def get_translation_provider() -> TranslationProvider:
     """Thread-safe factory retrieving the TranslationProvider.
 
-    Resolves via setting ``TRANSLATION_MODEL``. Defaults to Rule-based fallback.
+    Resolves dynamically based on settings.
     """
     global _translation_provider
 
@@ -210,9 +210,36 @@ def get_translation_provider() -> TranslationProvider:
     with _lock:
         if _translation_provider is None:
             settings = get_settings()
+            provider = settings.TRANSLATION_PROVIDER.lower()
             model_name = settings.TRANSLATION_MODEL
 
-            _translation_provider = HuggingFaceTranslationProvider(model_name=model_name)
+            if provider == "huggingface":
+                from edumind.services.translation.huggingface import HuggingFaceTranslationProvider
+
+                _translation_provider = HuggingFaceTranslationProvider(model_name=model_name)
+            elif provider in ("google", "gemini"):
+                from edumind.services.translation.api import GeminiTranslationProvider
+
+                _translation_provider = GeminiTranslationProvider(model_name=model_name)
+            elif provider == "openai":
+                from edumind.services.translation.api import OpenAILikeTranslationProvider
+
+                _translation_provider = OpenAILikeTranslationProvider(
+                    model_name=model_name,
+                    api_key_prefix="OPENAI_API_KEY_",
+                )
+            elif provider == "groq":
+                from edumind.services.translation.api import OpenAILikeTranslationProvider
+
+                _translation_provider = OpenAILikeTranslationProvider(
+                    model_name=model_name,
+                    api_key_prefix="GROQ_API_KEY_",
+                    base_url="https://api.groq.com/openai/v1",
+                )
+            else:
+                from edumind.services.translation.rule_based import RuleBasedTranslationProvider
+
+                _translation_provider = RuleBasedTranslationProvider()
 
         return _translation_provider
 
