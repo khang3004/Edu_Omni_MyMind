@@ -85,6 +85,15 @@ class HuggingFaceTranslationProvider(TranslationProvider):
                 is_causal = any("CausalLM" in arch for arch in config.architectures)
             self._is_causal = is_causal
 
+            generation_config = None
+            if "qwen2.5" in name_lower:
+                from transformers import GenerationConfig
+
+                try:
+                    generation_config = GenerationConfig.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+                except Exception:
+                    pass
+
             self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
             if self._tokenizer.pad_token is None:
                 self._tokenizer.pad_token = self._tokenizer.eos_token
@@ -118,11 +127,11 @@ class HuggingFaceTranslationProvider(TranslationProvider):
                 self._model = AutoModelForCausalLM.from_pretrained(
                     self._model_name,
                     config=config,
+                    generation_config=generation_config,
                     torch_dtype=dtype,
                     low_cpu_mem_usage=True,
+                    device_map="auto",
                 )
-                if device != "cpu":
-                    self._model = self._model.to(device)
             else:
                 from transformers import AutoModelForSeq2SeqLM
 
