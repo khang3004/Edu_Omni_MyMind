@@ -216,7 +216,13 @@ def get_translation_provider() -> TranslationProvider:
             if provider == "huggingface":
                 from edumind.services.translation.huggingface import HuggingFaceTranslationProvider
 
-                _translation_provider = HuggingFaceTranslationProvider(model_name=model_name)
+                _translation_provider = HuggingFaceTranslationProvider(
+                    model_name=model_name,
+                    arch=settings.TRANSLATION_ARCH,
+                    direction=settings.TRANSLATION_DIRECTION,
+                    base_model=settings.TRANSLATION_BASE_MODEL,
+                    max_model_gb=settings.TRANSLATION_MAX_MODEL_GB,
+                )
             elif provider in ("google", "gemini"):
                 from edumind.services.translation.api import GeminiTranslationProvider
 

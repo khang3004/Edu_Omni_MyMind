@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # --- Translation ---
     TRANSLATION_PROVIDER: str = Field(default="huggingface")
     TRANSLATION_MODEL: str = Field(default="none")
+    # "auto" detects from model config; override with "seq2seq" or "causal"
+    TRANSLATION_ARCH: str = Field(default="auto")
+    # "auto" infers from model name; override with "vi-en", "en-vi", or "both"
+    TRANSLATION_DIRECTION: str = Field(default="auto")
+    # Base model ID for config fallback (e.g. "Qwen/Qwen2.5-7B-Instruct")
+    TRANSLATION_BASE_MODEL: str = Field(default="")
+    # Max model size in GB to allow loading (0 = no limit)
+    TRANSLATION_MAX_MODEL_GB: float = Field(default=4.0)
 
     # --- Qdrant (explicitly not prefixed with EDUMIND_) ---
     QDRANT_MODE: Literal["memory", "local", "server"] = Field(
